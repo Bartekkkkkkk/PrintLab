@@ -55,3 +55,28 @@ Jeśli stary projekt Vercel wciąż zgłasza **`Cannot read properties of undefi
 ## Pliki
 
 `index.html` – układ, `styles.css` – RWD i wygląd, `app.js` – logika sklepu/admina, `config.js` – publiczne połączenie Supabase, `assets/logo.png` – Twoje logo, `supabase/schema.sql` – struktura i RLS, `supabase/seed-admin.sql` – pierwsze konto admina.
+
+## Aktualizacja widoczności Moich zamówień
+Przycisk `Moje zamówienia` w menu desktop i mobilnym jest domyślnie ukryty. Pokazuje się tylko zalogowanemu użytkownikowi po sprawdzeniu sesji Supabase. Po wylogowaniu znika, a użytkownik znajdujący się na stronie zamówień zostaje przeniesiony do sklepu.
+
+
+## Zmiana w tej wersji
+Usunięto osobną stronę „Ustawienia konta” i formularz edycji profilu. Przycisk w nagłówku po zalogowaniu ma nazwę „Wyloguj się” i wylogowuje konto. Logowanie, rejestracja, Moje zamówienia (tylko po zalogowaniu) i panel administratora pozostają.
+
+
+## Ulepszenia logowania i wiadomości (ta aktualizacja)
+- Po zalogowaniu przycisk w nagłówku to **Wyloguj** (wylogowuje jednym kliknięciem). Nie ma strony ani formularza „Ustawienia konta”.
+- `Moje zamówienia` widoczne tylko dla zalogowanych.
+- Rejestracja przekazuje `emailRedirectTo`, a reset hasła `redirectTo` z bieżącego bezpiecznego adresu HTTPS sklepu.
+- Wysłanie maila z localhost jest blokowane i pokazuje wyjaśnienie, aby uniknąć przypadkowych błędnych linków.
+- Po wejściu przez link resetowania hasła sklep pokazuje formularz ustawienia nowego hasła.
+- Dwa gotowe szablony w `supabase/email-templates/`.
+
+### OBOWIĄZKOWE ustawienie linków w Supabase (nie da się zmienić samą paczką HTML)
+1. Sprawdź ostateczny adres sklepu np. `https://printlab-twojanazwa.vercel.app`.
+2. Supabase Dashboard → Authentication → URL Configuration: **Site URL** ustaw dokładnie na adres produkcyjny HTTPS. Usuń domyślne `http://localhost:3000`.
+3. W **Redirect URLs** dodaj `https://printlab-twojanazwa.vercel.app/**` (zamień na prawdziwą domenę). Dodatkowe domeny produkcyjne dodaj osobno.
+4. Authentication → Email Templates → **Confirm signup**: wklej zawartość `supabase/email-templates/potwierdzenie-konta.html`. Dla **Reset password** użyj `reset-hasla.html`. Zapisz oba szablony.
+5. Zachowaj dokładnie `{{ .ConfirmationURL }}` w szablonach; to link Supabase weryfikujący token.
+6. Przetestuj rejestrację nowego konta i reset hasła z produkcyjnego adresu HTTPS.
+7. Jeśli zobaczysz link localhost po tych zmianach, sprawdź Site URL, listę Redirect URLs oraz czy użytkownik nie kliknął starego maila.

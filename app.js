@@ -28,15 +28,19 @@ function closeModal(){$('modalWrap').classList.add('hidden');$('cartDrawer').cla
 function showPage(page){
   if(page==='admin'&&!isAdmin){notify('Brak uprawnień administratora.');return}
   if(page==='orders'&&!user){showAuth();return}
-  currentPage=page;['shop','admin','orders','account'].forEach(p=>$(p+'View').classList.toggle('hidden',p!==page));
+  currentPage=page;['shop','admin','orders'].forEach(p=>$(p+'View').classList.toggle('hidden',p!==page));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.id===({shop:'goShop',admin:'goAdmin',orders:'goOrders'}[page])));
   $('mobileMenu').classList.add('hidden');$('mobileNavButton').setAttribute('aria-expanded','false');
-  if(page==='admin')renderAdmin();if(page==='orders')loadOrders();if(page==='account')renderAccount();
+  if(page==='admin')renderAdmin();if(page==='orders')loadOrders();
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function updateAuthUI(){
+  // Zamówienia widoczne dopiero po potwierdzeniu aktywnej sesji.
+  $('goOrders').classList.toggle('hidden', !user);
+  $('mobileOrders').classList.toggle('hidden', !user);
+  if (!user && currentPage === 'orders') showPage('shop');
   document.querySelectorAll('.admin-only').forEach(el=>el.classList.toggle('hidden',!isAdmin));
-  $('authButton').textContent=user?'Moje konto':'Zaloguj się';
+  $('authButton').textContent=user?'Wyloguj':'Zaloguj się';
 }
 async function loadCatalog(){
   if(!sb){renderCatalog();return}
@@ -96,7 +100,24 @@ async function refreshAuth(){
   }
   updateAuthUI();await loadCatalog();
   if(currentPage==='admin'&&!isAdmin)showPage('shop');
-  if(currentPage==='account')renderAccount();
+}
+function productionRedirect(){
+  const url = new URL(window.location.href);
+  // Linki mailowe nie mogą kierować na testowy serwer localhost.
+  if (['localhost','127.0.0.1','0.0.0.0'].includes(url.hostname) || url.protocol !== 'https:') {
+    throw new Error('Linki weryfikacyjne wysyłaj po uruchomieniu sklepu na HTTPS (Vercel). Ustaw też Site URL w Supabase → Authentication → URL Configuration.');
+  }
+  return url.origin + url.pathname;
+}
+function showNewPasswordModal(){
+  modal(`<div class="eyebrow"><span class="dot"></span> PRINTLAB / BEZPIECZEŃSTWO</div><h2 id="modalTitle">Ustaw nowe hasło</h2><p class="modal-desc">Podaj nowe hasło do swojego konta PrintLab.</p><form id="newPasswordForm" class="form-grid"><div class="field span2"><label for="newPassword">Nowe hasło</label><input id="newPassword" type="password" minlength="8" required autocomplete="new-password"></div><div class="field span2"><label for="confirmPassword">Powtórz hasło</label><input id="confirmPassword" type="password" minlength="8" required autocomplete="new-password"></div><div class="field span2"><button type="submit" class="primary-btn full">Zapisz nowe hasło</button></div></form>`);
+  $('newPasswordForm').onsubmit = async e => {
+    e.preventDefault(); const pass=$('newPassword').value;
+    if (pass!==$('confirmPassword').value){notify('Hasła nie są identyczne.');return;}
+    const button=e.target.querySelector('[type=submit]'); setLoading(button,true);
+    try {const {error}=await sb.auth.updateUser({password:pass}); if(error)throw error;closeModal();notify('Hasło zostało zmienione.');history.replaceState({},'',location.pathname);}
+    catch(error){fail(error)}finally{setLoading(button,false)}
+  };
 }
 function showAuth(mode='login'){
   if(!sb){notify('Najpierw skonfiguruj Supabase w pliku config.js.');return}
@@ -112,8 +133,8 @@ function showAuth(mode='login'){
     const email=$('loginEmail').value.trim(),password=$('loginPassword')?.value;
     try{
       let result;
-      if(isRegister)result=await sb.auth.signUp({email,password,options:{data:{display_name:$('fullName').value.trim()}}});
-      else if(isReset)result=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+      if(isRegister)result=await sb.auth.signUp({email,password,options:{emailRedirectTo:productionRedirect(),data:{display_name:$('fullName').value.trim()}}});
+      else if(isReset)result=await sb.auth.resetPasswordForEmail(email,{redirectTo:productionRedirect()});
       else result=await sb.auth.signInWithPassword({email,password});
       if(result.error)throw result.error;
       closeModal();notify(isRegister?'Sprawdź skrzynkę e-mail, jeśli wymagane jest potwierdzenie.':isReset?'Sprawdź pocztę e-mail.':'Zalogowano.');
@@ -124,16 +145,13 @@ function showAuth(mode='login'){
   $('switchToRegister')?.addEventListener('click',()=>showAuth('register'));
   $('switchToReset')?.addEventListener('click',()=>showAuth('reset'));
 }
-async function showAccountMenu(){if(!user){showAuth();return}showPage('account')}
-function renderAccount(){
-  if(!user){$('accountContent').innerHTML='<p>Zaloguj się, aby zarządzać kontem.</p>';return}
-  $('accountContent').innerHTML=`<h2>Twoje dane</h2><p class="subtle">Konto: ${escapeHTML(user.email)}</p>
-  <form id="profileForm" class="form-grid" style="max-width:500px"><div class="field span2"><label>Imię / nazwa</label><input name="display_name" maxlength="100" value="${escapeHTML(profile?.display_name||'')}"></div>
-  <div class="field span2"><label>Telefon</label><input name="phone" maxlength="30" value="${escapeHTML(profile?.phone||'')}"></div>
-  <div class="field span2"><button type="submit" class="primary-btn">Zapisz dane</button></div></form>
-  <hr style="border:0;border-top:1px solid #eee;margin:24px 0"><button type="button" class="secondary-btn" id="logoutButton">Wyloguj się</button>`;
-  $('profileForm').addEventListener('submit',async e=>{e.preventDefault();let fd=new FormData(e.target);const {error}=await sb.from('profiles').update({display_name:String(fd.get('display_name')||'').trim(),phone:String(fd.get('phone')||'').trim()}).eq('id',user.id);if(error)fail(error);else{notify('Dane zapisane.');profile={...profile,display_name:fd.get('display_name'),phone:fd.get('phone')}}});
-  $('logoutButton').addEventListener('click',async()=>{let {error}=await sb.auth.signOut();if(error)fail(error);else{user=null;isAdmin=false;updateAuthUI();showPage('shop');await loadCatalog();notify('Wylogowano.')}});
+async function showAccountMenu(){
+  if(!user){showAuth();return}
+  if(!sb)return;
+  const {error}=await sb.auth.signOut();
+  if(error){fail(error);return}
+  user=null;isAdmin=false;profile=null;
+  updateAuthUI();showPage('shop');await loadCatalog();notify('Wylogowano.');
 }
 function productModal(productId){
   const p=products.find(x=>x.id===productId);if(!p)return;
@@ -336,7 +354,10 @@ async function boot(){
   try{
     const {createClient}=await import('https://esm.sh/@supabase/supabase-js@2.58.0');
     sb=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
-    sb.auth.onAuthStateChange(()=>setTimeout(()=>refreshAuth().catch(fail),0));
+    sb.auth.onAuthStateChange((event)=>{
+      if(event==='PASSWORD_RECOVERY') setTimeout(showNewPasswordModal,0);
+      setTimeout(()=>refreshAuth().catch(fail),0);
+    });
     await refreshAuth();
   }catch(error){fail(error);$('productGrid').innerHTML='<div class="config-warning">Nie udało się połączyć z Supabase. Sprawdź konfigurację i dostęp do Internetu.</div>'}
 }
