@@ -52,3 +52,6 @@ Usunięto pola SKU oraz adres/URL zdjęcia z formularzy produktów i wariantów.
 5. Sprawdź kolumnę `email_confirmation_sent_at` w `checkout_orders`. Brak daty oznacza brak potwierdzonej wysyłki.
 
 **Uwaga:** Wiadomości transakcyjne są wysyłane przez SMTP Vercel, a nie przez szablony Supabase Auth. Błąd SMTP oznacza ponowne próby webhooka Stripe. Dane SMTP trzymaj wyłącznie w Vercel.
+
+## Zmiana ceny produktu
+Edycja ceny podstawowej automatycznie aktualizuje cenę domyślnego wariantu Standard. Ceny niestandardowych wariantów edytuje się osobno w zakładce Warianty.

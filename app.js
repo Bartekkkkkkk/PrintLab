@@ -329,8 +329,17 @@ function productForm(id=null){
         const v={product_id:result.data.id,name:'Standard',price:payload.base_price,is_active:true};
         const res=await sb.from('product_variants').insert(v);
         if(res.error){await sb.from('products').delete().eq('id',result.data.id);throw new Error('Nie udało się utworzyć wariantu domyślnego: '+niceError(res.error))}
+      } else if(Number(p.base_price)!==payload.base_price){
+        // Koszyk i Stripe odczytują cenę wariantu.
+        // Synchronizuj domyślny wariant Standard, pozostaw inne warianty bez zmian.
+        const standard=variants.find(v=>v.product_id===id && v.name==='Standard');
+        if(standard){
+          const {error:variantError}=await sb.from('product_variants')
+            .update({price:payload.base_price}).eq('id',standard.id);
+          if(variantError)throw new Error('Cena bazowa zapisana, ale cena wariantu nie została zmieniona: '+niceError(variantError));
+        }
       }
-      closeModal();notify('Produkt zapisany.');await loadCatalog();
+      closeModal();notify('Produkt i cena zapisane.');await loadCatalog();
     }catch(err){fail(err)}finally{setLoading(b,false)}
   });
 }
