@@ -103,10 +103,9 @@ function renderCatalog(){
   $('productGrid').innerHTML=list.map(p=>{
     const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
     const price=vs.length?Math.min(...vs.map(v=>Number(v.price))):Number(p.base_price);
-    const availability=vs.reduce((s,v)=>s+v.stock,0);
     return `<article class="product-card"><div class="product-photo">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" loading="lazy" alt="${escapeHTML(p.name)}">`:`<span class="placeholder-product">PL<span>.</span></span>`}</div>
-      <div class="product-details"><span class="product-category-label">${escapeHTML(categoryName(p.category_id))}${availability?'':' · Brak w magazynie'}</span><h3>${escapeHTML(p.name)}</h3><p>${escapeHTML(p.description||'Produkt PrintLab — druk 3D.').slice(0,160)}</p>
-      <div class="product-bottom"><span class="product-price">${vs.length>1?'od ':''}${cash(price)}</span><button type="button" class="small-button" data-view-product="${p.id}">Zobacz</button></div></div></article>`;
+      <div class="product-details"><span class="product-category-label">${escapeHTML(categoryName(p.category_id))}</span><h3>${escapeHTML(p.name)}</h3><p>${escapeHTML(p.description||'Produkt PrintLab — druk 3D.').slice(0,160)}</p>
+      <p class="lead-time">Czas realizacji: 2 dni robocze</p><div class="product-bottom"><span class="product-price">${vs.length>1?'od ':''}${cash(price)}</span><button type="button" class="small-button" data-view-product="${p.id}">Zobacz</button></div></div></article>`;
   }).join('');
   if(!configured){
     $('productGrid').innerHTML='';$('emptyCatalog').classList.add('hidden');
@@ -186,14 +185,14 @@ function productModal(productId){
   const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
   modal(`<span class="section-kicker">${escapeHTML(categoryName(p.category_id))}</span><h2 id="modalTitle">${escapeHTML(p.name)}</h2>
   <div class="product-modal-pic" id="modalProductPic">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>'}</div>
-  <p class="modal-desc">${escapeHTML(p.description||'Produkt PrintLab.')}</p>
-  ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}" ${v.stock<1?'disabled':''}>${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)} ${v.stock===0?'(niedostępny)':''}</option>`).join('')}</select><p id="variantStock" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
+  <p class="modal-desc">${escapeHTML(p.description||'Produkt PrintLab.')}</p><p class="lead-time">Czas realizacji: 2 dni robocze</p>
+  ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}">${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)}</option>`).join('')}</select><p id="variantStock" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
   if(!vs.length)return;
-  const picker=$('variantPicker');picker.value=vs.find(v=>v.stock>0)?.id||vs[0].id;
+  const picker=$('variantPicker');picker.value=vs[0].id;
   const update=()=>{
     const v=vs.find(x=>x.id===picker.value);if(!v)return;
-    $('variantStock').textContent=`Stan magazynowy: ${v.stock} szt. · Cena: ${cash(v.price)}`;
-    $('addVariantToCart').disabled=v.stock<1;
+    $('variantStock').textContent=`Cena: ${cash(v.price)} · Czas realizacji: 2 dni robocze`;
+
     const img=cleanUrl(v.image_url)||cleanUrl(p.image_url);
     $('modalProductPic').innerHTML=img?`<img src="${escapeHTML(img)}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>';
   };
@@ -202,9 +201,9 @@ function productModal(productId){
 }
 function addToCart(productId,variantId){
   const v=variants.find(x=>x.id===variantId&&x.product_id===productId);
-  if(!v||!v.is_active||v.stock<1){notify('Ten wariant jest niedostępny.');return}
+  if(!v||!v.is_active){notify('Ten wariant jest niedostępny.');return}
   const row=cart.find(i=>i.id===productId&&i.variantId===variantId);
-  if(row){if(row.qty>=v.stock){notify('Brak większej ilości w magazynie.');return}row.qty++}else cart.push({id:productId,variantId,qty:1});
+  if(row){if(row.qty>=20){notify('Maksymalnie 20 szt. wariantu w jednym zamówieniu.');return}row.qty++}else cart.push({id:productId,variantId,qty:1});
   saveCart();notify('Dodano do koszyka.');
 }
 function updateCartCount(){let n=cart.reduce((sum,x)=>sum+x.qty,0);$('cartCount').textContent=`(${n})`;$('drawerCount').textContent=`(${n})`}
@@ -219,11 +218,15 @@ async function openCheckout(){
  if(!sb||!user){notify('Zaloguj się, aby złożyć zamówienie.');showAuth();return}
  if(!cart.length){notify('Koszyk jest pusty.');return}
  closeModal();
- modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Wpisz kod Paczkomatu InPost i dane odbiorcy. Przesyłkę nadamy ręcznie po opłaceniu zamówienia. Cenę produktów weryfikuje serwer.</p>
+ modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Dostawa wyłącznie kurierem InPost pod wskazany adres. Przesyłkę nadamy ręcznie po opłaceniu zamówienia. Cenę produktów weryfikuje serwer.</p>
   <form id="inpostCheckoutForm" class="form-grid">
     <div class="field span2"><label>Imię i nazwisko odbiorcy *</label><input name="recipient" maxlength="120" required autocomplete="name" placeholder="Jan Kowalski"></div>
     <div class="field span2"><label>Telefon do odbioru paczki *</label><input name="phone" type="tel" required placeholder="500 600 700" autocomplete="tel"></div>
-    <div class="field span2"><label>Kod Paczkomatu InPost *</label><input name="point" id="chosenPoint" required maxlength="32" pattern="[A-Za-z0-9-]{3,32}" placeholder="Np. WAW01M" autocapitalize="characters"><small>Znajdź Paczkomat na <a href="https://inpost.pl/znajdz-paczkomat" target="_blank" rel="noopener noreferrer">mapie InPost</a> i wpisz jego kod. Nie podawaj adresu domowego.</small></div>
+    <div class="field span2"><label>Ulica i numer domu *</label><input name="street" required maxlength="160" autocomplete="address-line1" placeholder="np. Warszawska 12"></div>
+    <div class="field span2"><label>Numer lokalu (opcjonalnie)</label><input name="apartment" maxlength="32" autocomplete="address-line2" placeholder="np. 5"></div>
+    <div class="field"><label>Kod pocztowy *</label><input name="postal_code" required inputmode="numeric" pattern="[0-9]{2}-[0-9]{3}" maxlength="6" autocomplete="postal-code" placeholder="00-001"></div>
+    <div class="field"><label>Miejscowość *</label><input name="city" required maxlength="90" autocomplete="address-level2" placeholder="np. Warszawa"></div>
+    <div class="field span2"><small>Metoda dostawy: InPost Kurier — wyłącznie pod adres, bez Paczkomatów.</small></div>
     <div class="field span2"><p class="subtle" id="checkoutNote">Koszt dostawy i ostateczna kwota zostaną wyświetlone również na stronie płatności.</p></div>
     <div class="field span2"><button class="primary-btn full" type="submit">Przejdź do bezpiecznej płatności →</button></div>
   </form>`);
@@ -232,7 +235,7 @@ async function openCheckout(){
    button.disabled=true;button.textContent='Przekierowywanie…';
    try{
     const {data:{session}}=await sb.auth.getSession();if(!session?.access_token)throw Error('Zaloguj się ponownie.');
-    const body={items:cart.map(i=>({variantId:i.variantId,qty:i.qty})),point:form.elements.namedItem('point').value,recipient:form.elements.namedItem('recipient').value,phone:form.elements.namedItem('phone').value};
+    const body={items:cart.map(i=>({variantId:i.variantId,qty:i.qty})),address:{street:form.elements.namedItem('street').value,apartment:form.elements.namedItem('apartment').value,postal_code:form.elements.namedItem('postal_code').value,city:form.elements.namedItem('city').value,country:'PL'},recipient:form.elements.namedItem('recipient').value,phone:form.elements.namedItem('phone').value};
     const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify(body)});
     const result=await response.json();if(!response.ok)throw Error(result.error||'Błąd płatności');
     if(!result.url||!result.url.startsWith('https://checkout.stripe.com/'))throw Error('Nieprawidłowy adres płatności.');
@@ -266,13 +269,13 @@ function renderAdmin(){
       `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong><br><small>${escapeHTML(p.sku||'Bez SKU')}</small></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button data-admin-action="product-delete" data-id="${p.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='variants'){
     target.innerHTML=headRow('Warianty / podprodukty',products.length?'Dodaj wariant':'','variant-add')+
-      `<p class="subtle">Wariant posiada własny kolor, rozmiar, SKU, cenę, stan magazynowy i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
-      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>SKU</th><th>Cena</th><th>Stan</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${escapeHTML(v.sku||'—')}</td><td>${cash(v.price)}</td><td>${v.stock} szt.</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+      `<p class="subtle">Wariant posiada własny kolor, rozmiar, SKU, cenę i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>SKU</th><th>Cena</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${escapeHTML(v.sku||'—')}</td><td>${cash(v.price)}</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='orders'){
     target.innerHTML=headRow('Zamówienia — Stripe / ręczne InPost')+'<p class="subtle">Po potwierdzeniu płatności przez Stripe nadaj przesyłkę ręcznie. Wprowadź numer śledzenia i wybierz status. Nie zmieniaj statusu wysyłki przed opłaceniem.</p><div id="adminOrderTable">Wczytywanie…</div>';
-    sb.from('checkout_orders').select('id,email,recipient,phone,inpost_point,items,total,shipping_cost,status,payment_status,inpost_tracking,created_at').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
+    sb.from('checkout_orders').select('id,email,recipient,phone,delivery_address,items,total,shipping_cost,status,payment_status,inpost_tracking,created_at').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
       if(error){$('adminOrderTable').textContent=niceError(error);return}
-      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Paczkomat</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(o.payment_status)}</span></td><td>${escapeHTML(o.inpost_point)}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
+      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Adres doręczenia</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(o.payment_status)}</span></td><td>${escapeHTML([o.delivery_address?.street,o.delivery_address?.apartment?('lok. '+o.delivery_address.apartment):'',o.delivery_address?.postal_code,o.delivery_address?.city].filter(Boolean).join(', ')||'Brak adresu')}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
     });
   }else if(adminTab==='customers'){
     target.innerHTML=headRow('Klienci')+'<p class="subtle">Lista profili użytkowników zarejestrowanych przez Supabase Auth.</p><div id="adminCustomerTable">Wczytywanie…</div>';
@@ -311,7 +314,6 @@ function productForm(id=null){
   <div class="field span2"><label>Opis produktu</label><textarea name="description">${escapeHTML(p?.description||'')}</textarea></div>
   <div class="field"><label>Cena podstawowa (zł) *</label><input name="base_price" type="number" min="0" max="9999999" step="0.01" required value="${p?.base_price??''}"></div>
   <div class="field"><label>SKU (opcjonalnie)</label><input name="sku" maxlength="100" value="${escapeHTML(p?.sku||'')}"></div>
-  ${editing?'':`<div class="field"><label>Początkowy stan wariantu domyślnego</label><input name="initial_stock" type="number" min="0" max="999999" value="0"></div>`}
   <div class="field span2"><label>Zdjęcie produktu (JPG, PNG, WebP, AVIF, do 5 MB)</label><input name="photo" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><span class="tiny">Wysyłane do Supabase Storage. Bez plików lokalnych na Vercel.</span></div>
   <div class="field span2"><label>Adres zdjęcia (opcjonalnie, https://)</label><input name="image_url" type="url" value="${escapeHTML(p?.image_url||'')}"></div>
   <div class="field span2"><label class="check-row"><input type="checkbox" name="is_active" ${checked(p?.is_active??true)}> Produkt widoczny w sklepie</label></div>
@@ -325,7 +327,7 @@ function productForm(id=null){
       const result=editing?await sb.from('products').update(payload).eq('id',id).select('id').single():await sb.from('products').insert(payload).select('id').single();
       if(result.error)throw result.error;
       if(!editing){
-        const v={product_id:result.data.id,name:'Standard',price:payload.base_price,stock:Math.max(0,Math.floor(Number(d.get('initial_stock')||0))),is_active:true};
+        const v={product_id:result.data.id,name:'Standard',price:payload.base_price,is_active:true};
         const res=await sb.from('product_variants').insert(v);
         if(res.error){await sb.from('products').delete().eq('id',result.data.id);throw new Error('Nie udało się utworzyć wariantu domyślnego: '+niceError(res.error))}
       }
@@ -345,14 +347,13 @@ async function uploadImage(file){
 function variantForm(id=null,defaultProductId=''){
   ensureAdmin();const v=variants.find(v=>v.id===id),editing=!!v;
   if(!products.length){notify('Najpierw dodaj produkt.');return}
-  modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} wariant / podprodukt</h2><p class="modal-desc">Np. czarny, czerwony, 50 mm, 80 mm — każdy wariant z własną ceną, zdjęciem i stanem.</p>
+  modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} wariant / podprodukt</h2><p class="modal-desc">Np. czarny, czerwony, 50 mm, 80 mm — każdy wariant z własną ceną i zdjęciem.</p>
   <form id="variantForm" class="form-grid"><div class="field span2"><label>Produkt nadrzędny *</label><select name="product_id" required>${selectOptions(products,v?.product_id||defaultProductId,'Wybierz produkt')}</select></div>
   <div class="field span2"><label>Nazwa wariantu *</label><input name="name" required maxlength="120" value="${escapeHTML(v?.name||'')}"></div>
   <div class="field"><label>Kolor</label><input name="color" maxlength="100" value="${escapeHTML(v?.color||'')}"></div>
   <div class="field"><label>Rozmiar</label><input name="size" maxlength="100" value="${escapeHTML(v?.size||'')}"></div>
   <div class="field"><label>SKU (unikalny)</label><input name="sku" maxlength="100" value="${escapeHTML(v?.sku||'')}"></div>
   <div class="field"><label>Cena wariantu (zł) *</label><input name="price" type="number" min="0" step="0.01" required value="${v?.price??0}"></div>
-  <div class="field"><label>Stan magazynowy *</label><input name="stock" type="number" min="0" max="999999" required value="${v?.stock??0}"></div>
   <div class="field"><label>Widoczność</label><select name="is_active"><option value="true" ${selected(String(v?.is_active??true),'true')}>Aktywny</option><option value="false" ${selected(String(v?.is_active??true),'false')}>Ukryty</option></select></div>
   <div class="field span2"><label>Zdjęcie wariantu (opcjonalne)</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/avif"></div>
   <div class="field span2"><label>URL zdjęcia (opcjonalnie)</label><input type="url" name="image_url" value="${escapeHTML(v?.image_url||'')}"></div>
@@ -361,7 +362,7 @@ function variantForm(id=null,defaultProductId=''){
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
       let url=cleanUrl(d.get('image_url'));if(d.get('photo')?.size)url=await uploadImage(d.get('photo'));
-      const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),sku:String(d.get('sku')||'').trim()||null,price:Number(d.get('price')),stock:Number(d.get('stock')),image_url:url||null,is_active:d.get('is_active')==='true'};
+      const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),sku:String(d.get('sku')||'').trim()||null,price:Number(d.get('price')),image_url:url||null,is_active:d.get('is_active')==='true'};
       const {error}=editing?await sb.from('product_variants').update(payload).eq('id',id):await sb.from('product_variants').insert(payload);
       if(error)throw error;closeModal();notify('Wariant zapisany.');await loadCatalog();
     }catch(err){fail(err)}finally{setLoading(b,false)}
@@ -407,7 +408,7 @@ function wire(){
    }
    let action=e.target.closest('[data-admin-action]');if(action)adminAction(action.dataset.adminAction,action.dataset.id);
  };
-  $('cartItems').onclick=e=>{let plus=e.target.closest('[data-cart-qty]'),del=e.target.closest('[data-cart-remove]');if(plus){let item=cart.find(x=>x.variantId===plus.dataset.cartQty);if(!item)return;const v=variants.find(v=>v.id===item.variantId);let next=item.qty+Number(plus.dataset.change);if(next>(v?.stock||0)){notify('Za mało sztuk w magazynie.');return}if(next<=0)cart=cart.filter(i=>i!==item);else item.qty=next;saveCart();renderCart()}if(del){cart=cart.filter(i=>i.variantId!==del.dataset.cartRemove);saveCart();renderCart()}};
+  $('cartItems').onclick=e=>{let plus=e.target.closest('[data-cart-qty]'),del=e.target.closest('[data-cart-remove]');if(plus){let item=cart.find(x=>x.variantId===plus.dataset.cartQty);if(!item)return;const v=variants.find(v=>v.id===item.variantId);let next=item.qty+Number(plus.dataset.change);if(next>20){notify('Maksymalnie 20 szt. wariantu w jednym zamówieniu.');return}if(next<=0)cart=cart.filter(i=>i!==item);else item.qty=next;saveCart();renderCart()}if(del){cart=cart.filter(i=>i.variantId!==del.dataset.cartRemove);saveCart();renderCart()}};
   $('screenOverlay').onclick=closeModal;$('modalClose').onclick=closeModal;document.querySelector('.drawer .close-btn').onclick=closeModal;
   $('modalBody').onclick=e=>{if(e.target.closest('[data-modal-cancel]'))closeModal()};
   document.onkeydown=e=>{if(e.key==='Escape')closeModal()};updateCartCount();
