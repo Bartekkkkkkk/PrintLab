@@ -28,3 +28,10 @@
 - Checkout Stripe nie blokuje już wariantów z powodu ilości `stock`. Pozostawiono limit 20 sztuk danego wariantu na jedno zamówienie jako limit techniczny.
 - Nie trzeba wykonywać nowego SQL ani usuwać kolumny `stock` z Supabase (stare dane zostają, ale aplikacja ich nie używa).
 - Czas realizacji to deklarowany czas przygotowania zamówienia, nie termin doręczenia przez kuriera.
+
+## Korekta formularzy administratora
+- Pole `Początkowy stan` jest usunięte; sklep nie wymaga stanów magazynowych.
+- Usunięto wpisywanie adresu/URL zdjęcia zarówno dla produktu, jak i wariantu. Zdjęcia dodaje się wyłącznie poprzez przesłanie pliku.
+- Podczas edycji bez wgrania nowego zdjęcia dotychczasowe zdjęcie pozostaje bez zmian.
+- SKU to opcjonalny, unikalny kod wewnętrzny produktu/wariantu; nie jest stanem magazynowym.
+- Czas realizacji pozostaje 2 dni robocze.

@@ -186,12 +186,12 @@ function productModal(productId){
   modal(`<span class="section-kicker">${escapeHTML(categoryName(p.category_id))}</span><h2 id="modalTitle">${escapeHTML(p.name)}</h2>
   <div class="product-modal-pic" id="modalProductPic">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>'}</div>
   <p class="modal-desc">${escapeHTML(p.description||'Produkt PrintLab.')}</p><p class="lead-time">Czas realizacji: 2 dni robocze</p>
-  ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}">${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)}</option>`).join('')}</select><p id="variantStock" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
+  ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}">${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)}</option>`).join('')}</select><p id="variantFulfillment" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
   if(!vs.length)return;
   const picker=$('variantPicker');picker.value=vs[0].id;
   const update=()=>{
     const v=vs.find(x=>x.id===picker.value);if(!v)return;
-    $('variantStock').textContent=`Cena: ${cash(v.price)} · Czas realizacji: 2 dni robocze`;
+    $('variantFulfillment').textContent=`Cena: ${cash(v.price)} · Czas realizacji: 2 dni robocze`;
 
     const img=cleanUrl(v.image_url)||cleanUrl(p.image_url);
     $('modalProductPic').innerHTML=img?`<img src="${escapeHTML(img)}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>';
@@ -315,13 +315,12 @@ function productForm(id=null){
   <div class="field"><label>Cena podstawowa (zł) *</label><input name="base_price" type="number" min="0" max="9999999" step="0.01" required value="${p?.base_price??''}"></div>
   <div class="field"><label>SKU (opcjonalnie)</label><input name="sku" maxlength="100" value="${escapeHTML(p?.sku||'')}"></div>
   <div class="field span2"><label>Zdjęcie produktu (JPG, PNG, WebP, AVIF, do 5 MB)</label><input name="photo" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><span class="tiny">Wysyłane do Supabase Storage. Bez plików lokalnych na Vercel.</span></div>
-  <div class="field span2"><label>Adres zdjęcia (opcjonalnie, https://)</label><input name="image_url" type="url" value="${escapeHTML(p?.image_url||'')}"></div>
   <div class="field span2"><label class="check-row"><input type="checkbox" name="is_active" ${checked(p?.is_active??true)}> Produkt widoczny w sklepie</label></div>
   <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz produkt</button></div></form>`);
   $('productForm').addEventListener('submit',async e=>{
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
-      let url=cleanUrl(d.get('image_url'));const file=d.get('photo');if(file?.size)url=await uploadImage(file);
+      let url=p?.image_url||null;const file=d.get('photo');if(file?.size)url=await uploadImage(file);
       const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id'),description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),sku:String(d.get('sku')||'').trim()||null,image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
       if(!editing)payload.slug=defaultSlug(payload.name);
       const result=editing?await sb.from('products').update(payload).eq('id',id).select('id').single():await sb.from('products').insert(payload).select('id').single();
@@ -356,12 +355,11 @@ function variantForm(id=null,defaultProductId=''){
   <div class="field"><label>Cena wariantu (zł) *</label><input name="price" type="number" min="0" step="0.01" required value="${v?.price??0}"></div>
   <div class="field"><label>Widoczność</label><select name="is_active"><option value="true" ${selected(String(v?.is_active??true),'true')}>Aktywny</option><option value="false" ${selected(String(v?.is_active??true),'false')}>Ukryty</option></select></div>
   <div class="field span2"><label>Zdjęcie wariantu (opcjonalne)</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/avif"></div>
-  <div class="field span2"><label>URL zdjęcia (opcjonalnie)</label><input type="url" name="image_url" value="${escapeHTML(v?.image_url||'')}"></div>
   <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz wariant</button></div></form>`);
   $('variantForm').addEventListener('submit',async e=>{
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
-      let url=cleanUrl(d.get('image_url'));if(d.get('photo')?.size)url=await uploadImage(d.get('photo'));
+      let url=v?.image_url||null;if(d.get('photo')?.size)url=await uploadImage(d.get('photo'));
       const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),sku:String(d.get('sku')||'').trim()||null,price:Number(d.get('price')),image_url:url||null,is_active:d.get('is_active')==='true'};
       const {error}=editing?await sb.from('product_variants').update(payload).eq('id',id):await sb.from('product_variants').insert(payload);
       if(error)throw error;closeModal();notify('Wariant zapisany.');await loadCatalog();
