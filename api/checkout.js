@@ -5,7 +5,7 @@ export default async function handler(req,res){
  try{
   const {stripe,db,site}=settings();if(!allowOrigin(req,res,site))return;
   const user=await authorize(db,req);
-  const {items,address,recipient,phone}=req.body||{};
+  const {items,address,recipient,phone,recipientEmail}=req.body||{};
   if(!Array.isArray(items)||items.length<1||items.length>LIMIT_ITEMS)throw new Error('Nieprawidłowy koszyk.');
   if(!address||typeof address!=='object'||Array.isArray(address))throw new Error('Podaj adres dostawy.');
   const validText=(v,min,max)=>typeof v==='string'&&v.trim().length>=min&&v.trim().length<=max;
@@ -17,6 +17,10 @@ export default async function handler(req,res){
   const deliveryAddress={street:address.street.trim(),apartment:(address.apartment||'').trim(),postal_code:address.postal_code,city:address.city.trim(),country:'PL'};
   if(typeof recipient!=='string'||recipient.trim().length<3||recipient.length>120)throw new Error('Wpisz imię i nazwisko odbiorcy.');
   if(typeof phone!=='string'||!/^\+?[0-9 ]{9,16}$/.test(phone))throw new Error('Podaj poprawny numer telefonu.');
+  const emailPattern=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if(typeof recipientEmail!=='string'||recipientEmail.length>254||!emailPattern.test(recipientEmail.trim()))throw new Error('Podaj poprawny e-mail odbiorcy.');
+  const contactEmail=recipientEmail.trim().toLowerCase();
+
   const ids=[];const quantities=new Map();
   for(const item of items){if(typeof item.variantId!=='string'||!(/^[0-9a-f-]{36}$/i).test(item.variantId)||!Number.isSafeInteger(item.qty)||item.qty<1||item.qty>20)throw new Error('Nieprawidłowy produkt lub ilość.');
     if(!quantities.has(item.variantId))ids.push(item.variantId);
@@ -36,10 +40,10 @@ export default async function handler(req,res){
   const shippingCents=Number(process.env.INPOST_SHIPPING_GROSZE||'1499');
   if(!Number.isSafeInteger(shippingCents)||shippingCents<0||shippingCents>100000)throw new Error('Błędny koszt dostawy.');
   const total=(lineItems.reduce((sum,l)=>sum+l.price_data.unit_amount*l.quantity,0)+shippingCents)/100;
-  const {data:order,error:insertError}=await db.from('checkout_orders').insert({user_id:user.id,email:user.email,recipient:recipient.trim(),phone:phone.replaceAll(' ',''),delivery_address:deliveryAddress,items:snapshot,total,shipping_cost:shippingCents/100,status:'pending_payment',payment_status:'unpaid'}).select('id').single();
+  const {data:order,error:insertError}=await db.from('checkout_orders').insert({user_id:user.id,email:contactEmail,recipient:recipient.trim(),phone:phone.replaceAll(' ',''),delivery_address:deliveryAddress,items:snapshot,total,shipping_cost:shippingCents/100,status:'pending_payment',payment_status:'unpaid'}).select('id').single();
   if(insertError)throw insertError;
   try{
-   const session=await stripe.checkout.sessions.create({mode:'payment',customer_email:user.email,line_items:[...lineItems,{price_data:{currency:'pln',unit_amount:shippingCents,product_data:{name:'InPost Kurier — dostawa pod adres'}},quantity:1}],client_reference_id:order.id,metadata:{order_id:order.id},success_url:`${site}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${site}/?payment=cancelled`,payment_method_types:['card','blik'],expires_at:Math.floor(Date.now()/1000)+1800});
+   const session=await stripe.checkout.sessions.create({mode:'payment',customer_email:contactEmail,line_items:[...lineItems,{price_data:{currency:'pln',unit_amount:shippingCents,product_data:{name:'InPost Kurier — dostawa pod adres'}},quantity:1}],client_reference_id:order.id,metadata:{order_id:order.id},success_url:`${site}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${site}/?payment=cancelled`,payment_method_types:['card','blik'],expires_at:Math.floor(Date.now()/1000)+1800});
    await db.from('checkout_orders').update({stripe_session_id:session.id}).eq('id',order.id);
    return res.status(200).json({url:session.url});
   }catch(e){await db.from('checkout_orders').update({status:'cancelled'}).eq('id',order.id);throw e;}

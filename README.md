@@ -35,3 +35,20 @@
 - Podczas edycji bez wgrania nowego zdjęcia dotychczasowe zdjęcie pozostaje bez zmian.
 - SKU to opcjonalny, unikalny kod wewnętrzny produktu/wariantu; nie jest stanem magazynowym.
 - Czas realizacji pozostaje 2 dni robocze.
+
+## Aktualizacja panelu
+Usunięto pola SKU oraz adres/URL zdjęcia z formularzy produktów i wariantów. Zdjęcia wybiera się tylko z pliku. Edytowanie bez nowego pliku zachowuje dotychczasowe zdjęcie. SKU nie jest już wysyłane podczas zapisu; stare wartości w bazie pozostają bez zmian. Nie jest wymagana migracja SQL.
+
+## Nowość: e-mail odbiorcy + automatyczne potwierdzenie
+1. W SQL Editor Supabase uruchom `supabase/order_email_migration.sql`.
+2. W Vercel → Project Settings → Environment Variables dodaj:
+   - `SMTP_HOST` — np. `smtp.gmail.com`
+   - `SMTP_PORT` — `587` (STARTTLS) lub `465` (SSL)
+   - `SMTP_USER` — login SMTP
+   - `SMTP_PASSWORD` — hasło aplikacji lub klucz SMTP (nie zwykłe hasło do Gmaila)
+   - `SMTP_FROM` — potwierdzony adres nadawcy, np. `PrintLab <twoj-adres@gmail.com>`
+3. Po uzupełnieniu zmiennych uruchom Redeploy.
+4. W Stripe użyj trybu testowego i opłać zamówienie testowe. Po webhooku potwierdzającym `paid` e-mail zostanie wysłany na adres z formularza.
+5. Sprawdź kolumnę `email_confirmation_sent_at` w `checkout_orders`. Brak daty oznacza brak potwierdzonej wysyłki.
+
+**Uwaga:** Wiadomości transakcyjne są wysyłane przez SMTP Vercel, a nie przez szablony Supabase Auth. Błąd SMTP oznacza ponowne próby webhooka Stripe. Dane SMTP trzymaj wyłącznie w Vercel.

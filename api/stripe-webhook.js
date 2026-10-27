@@ -1,4 +1,5 @@
 import { settings } from './_shared.js';
+import { sendPaidOrderEmail } from './_order_email.js';
 export const config={api:{bodyParser:false}};
 async function raw(req){const chunks=[];for await(const chunk of req)chunks.push(typeof chunk==='string'?Buffer.from(chunk):chunk);return Buffer.concat(chunks);}
 export default async function handler(req,res){
@@ -11,10 +12,19 @@ export default async function handler(req,res){
    const session=event.data.object;
    if(session.payment_status==='paid'){
     const id=session.metadata?.order_id;
-    const {data:order,error:e}=await db.from('checkout_orders').select('id,total,payment_status,stripe_session_id').eq('id',id).single();if(e||!order)throw new Error('Nie znaleziono zamówienia');
+    const {data:order,error:e}=await db.from('checkout_orders').select('id,total,payment_status,stripe_session_id,email,recipient,phone,delivery_address,items,shipping_cost,email_confirmation_sent_at').eq('id',id).single();if(e||!order)throw new Error('Nie znaleziono zamówienia');
     if(order.stripe_session_id!==session.id)throw new Error('Nieprawidłowa sesja płatności');
     if(Math.round(Number(order.total)*100)!==session.amount_total||session.currency!=='pln')throw new Error('Kwota lub waluta niezgodna');
     const {error}=await db.from('checkout_orders').update({status:'paid',payment_status:'paid',paid_at:new Date().toISOString()}).eq('id',id).neq('payment_status','paid');if(error)throw error;
+    // Powiadomienie e-mail wyłącznie po zweryfikowaniu opłaconej sesji Stripe.
+    // Ponowne zdarzenia Stripe nie wysyłają kolejnego maila po zapisaniu sent_at.
+    if(!order.email_confirmation_sent_at){
+      await sendPaidOrderEmail(order);
+      const {error:mailLogError}=await db.from('checkout_orders')
+        .update({email_confirmation_sent_at:new Date().toISOString()})
+        .eq('id',id).is('email_confirmation_sent_at',null);
+      if(mailLogError)throw mailLogError;
+    }
    }
   }else if(event.type==='checkout.session.expired'||event.type==='checkout.session.async_payment_failed'){
    const id=event.data.object.metadata?.order_id;

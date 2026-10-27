@@ -6,7 +6,7 @@ const cash = value => Number(value || 0).toLocaleString('pl-PL',{style:'currency
 const shortDate = value => new Date(value).toLocaleString('pl-PL',{dateStyle:'medium'});
 const selected = (a,b) => String(a??'')===String(b??'')?'selected':'';
 const checked = v => v?'checked':'';
-const niceError = e => e?.message?.replace('duplicate key value violates unique constraint', 'Ta wartość już istnieje (np. SKU lub nazwa URL).') || 'Wystąpił błąd.';
+const niceError = e => e?.message?.replace('duplicate key value violates unique constraint', 'Ta wartość już istnieje (np. nazwa URL).') || 'Wystąpił błąd.';
 const configured = /^https:\/\/[^\s]+\.supabase\.co\/?$/.test(SUPABASE_URL.trim()) && SUPABASE_ANON_KEY.length > 30 && !SUPABASE_ANON_KEY.includes('WPISZ');
 let sb = null, user = null, profile = null, isAdmin = false;
 let categories = [], products = [], variants = [], orders = [], customers = [];
@@ -221,12 +221,13 @@ async function openCheckout(){
  modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Dostawa wyłącznie kurierem InPost pod wskazany adres. Przesyłkę nadamy ręcznie po opłaceniu zamówienia. Cenę produktów weryfikuje serwer.</p>
   <form id="inpostCheckoutForm" class="form-grid">
     <div class="field span2"><label>Imię i nazwisko odbiorcy *</label><input name="recipient" maxlength="120" required autocomplete="name" placeholder="Jan Kowalski"></div>
-    <div class="field span2"><label>Telefon do odbioru paczki *</label><input name="phone" type="tel" required placeholder="500 600 700" autocomplete="tel"></div>
+    <div class="field span2"><label>Telefon odbiorcy *</label><input name="phone" type="tel" required placeholder="500 600 700" autocomplete="tel"></div>
+    <div class="field span2"><label>E-mail odbiorcy *</label><input name="recipient_email" type="email" required maxlength="254" autocomplete="email" placeholder="np. jan@example.com"><small>Na ten adres wyślemy potwierdzenie zamówienia po opłaceniu.</small></div>
     <div class="field span2"><label>Ulica i numer domu *</label><input name="street" required maxlength="160" autocomplete="address-line1" placeholder="np. Warszawska 12"></div>
     <div class="field span2"><label>Numer lokalu (opcjonalnie)</label><input name="apartment" maxlength="32" autocomplete="address-line2" placeholder="np. 5"></div>
     <div class="field"><label>Kod pocztowy *</label><input name="postal_code" required inputmode="numeric" pattern="[0-9]{2}-[0-9]{3}" maxlength="6" autocomplete="postal-code" placeholder="00-001"></div>
     <div class="field"><label>Miejscowość *</label><input name="city" required maxlength="90" autocomplete="address-level2" placeholder="np. Warszawa"></div>
-    <div class="field span2"><small>Metoda dostawy: InPost Kurier — wyłącznie pod adres, bez Paczkomatów.</small></div>
+    <div class="field span2"><small>Metoda dostawy: InPost Kurier</small></div>
     <div class="field span2"><p class="subtle" id="checkoutNote">Koszt dostawy i ostateczna kwota zostaną wyświetlone również na stronie płatności.</p></div>
     <div class="field span2"><button class="primary-btn full" type="submit">Przejdź do bezpiecznej płatności →</button></div>
   </form>`);
@@ -235,7 +236,7 @@ async function openCheckout(){
    button.disabled=true;button.textContent='Przekierowywanie…';
    try{
     const {data:{session}}=await sb.auth.getSession();if(!session?.access_token)throw Error('Zaloguj się ponownie.');
-    const body={items:cart.map(i=>({variantId:i.variantId,qty:i.qty})),address:{street:form.elements.namedItem('street').value,apartment:form.elements.namedItem('apartment').value,postal_code:form.elements.namedItem('postal_code').value,city:form.elements.namedItem('city').value,country:'PL'},recipient:form.elements.namedItem('recipient').value,phone:form.elements.namedItem('phone').value};
+    const body={items:cart.map(i=>({variantId:i.variantId,qty:i.qty})),address:{street:form.elements.namedItem('street').value,apartment:form.elements.namedItem('apartment').value,postal_code:form.elements.namedItem('postal_code').value,city:form.elements.namedItem('city').value,country:'PL'},recipient:form.elements.namedItem('recipient').value,phone:form.elements.namedItem('phone').value,recipientEmail:form.elements.namedItem('recipient_email').value};
     const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify(body)});
     const result=await response.json();if(!response.ok)throw Error(result.error||'Błąd płatności');
     if(!result.url||!result.url.startsWith('https://checkout.stripe.com/'))throw Error('Nieprawidłowy adres płatności.');
@@ -266,13 +267,13 @@ function renderAdmin(){
       `<div class="table-scroll"><table class="data-table"><thead><tr><th>Nazwa</th><th>Typ</th><th>Status</th><th>Kolejność</th><th>Akcje</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${c.parent_id?'↳ ':''}${escapeHTML(c.name)}</strong></td><td class="muted">${c.parent_id?'Podkategoria · '+escapeHTML(categoryName(c.parent_id)):'Kategoria główna'}</td><td><span class="status ${c.is_active?'':'off'}">${c.is_active?'Aktywna':'Ukryta'}</span></td><td>${c.position}</td><td class="actions"><button data-admin-action="category-edit" data-id="${c.id}">Edytuj</button><button data-admin-action="category-delete" data-id="${c.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='products'){
     target.innerHTML=headRow('Produkty','Dodaj produkt','product-add')+
-      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong><br><small>${escapeHTML(p.sku||'Bez SKU')}</small></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button data-admin-action="product-delete" data-id="${p.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button data-admin-action="product-delete" data-id="${p.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='variants'){
-    target.innerHTML=headRow('Warianty / podprodukty',products.length?'Dodaj wariant':'','variant-add')+
-      `<p class="subtle">Wariant posiada własny kolor, rozmiar, SKU, cenę i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
-      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>SKU</th><th>Cena</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${escapeHTML(v.sku||'—')}</td><td>${cash(v.price)}</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+    target.innerHTML=headRow('Warianty',products.length?'Dodaj wariant':'','variant-add')+
+      `<p class="subtle">Wariant posiada własny kolor, rozmiar, cenę i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>Cena</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${cash(v.price)}</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='orders'){
-    target.innerHTML=headRow('Zamówienia — Stripe / ręczne InPost')+'<p class="subtle">Po potwierdzeniu płatności przez Stripe nadaj przesyłkę ręcznie. Wprowadź numer śledzenia i wybierz status. Nie zmieniaj statusu wysyłki przed opłaceniem.</p><div id="adminOrderTable">Wczytywanie…</div>';
+    target.innerHTML=headRow('Zamówienia')+'<p class="subtle">Po potwierdzeniu płatności przez Stripe nadaj przesyłkę ręcznie. Wprowadź numer śledzenia i wybierz status. Nie zmieniaj statusu wysyłki przed opłaceniem.</p><div id="adminOrderTable">Wczytywanie…</div>';
     sb.from('checkout_orders').select('id,email,recipient,phone,delivery_address,items,total,shipping_cost,status,payment_status,inpost_tracking,created_at').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
       if(error){$('adminOrderTable').textContent=niceError(error);return}
       $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Adres doręczenia</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(o.payment_status)}</span></td><td>${escapeHTML([o.delivery_address?.street,o.delivery_address?.apartment?('lok. '+o.delivery_address.apartment):'',o.delivery_address?.postal_code,o.delivery_address?.city].filter(Boolean).join(', ')||'Brak adresu')}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
@@ -313,7 +314,6 @@ function productForm(id=null){
   <div class="field span2"><label>Kategoria / podkategoria *</label><select name="category_id" required>${selectOptions(opts,p?.category_id,'Wybierz kategorię')}</select></div>
   <div class="field span2"><label>Opis produktu</label><textarea name="description">${escapeHTML(p?.description||'')}</textarea></div>
   <div class="field"><label>Cena podstawowa (zł) *</label><input name="base_price" type="number" min="0" max="9999999" step="0.01" required value="${p?.base_price??''}"></div>
-  <div class="field"><label>SKU (opcjonalnie)</label><input name="sku" maxlength="100" value="${escapeHTML(p?.sku||'')}"></div>
   <div class="field span2"><label>Zdjęcie produktu (JPG, PNG, WebP, AVIF, do 5 MB)</label><input name="photo" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><span class="tiny">Wysyłane do Supabase Storage. Bez plików lokalnych na Vercel.</span></div>
   <div class="field span2"><label class="check-row"><input type="checkbox" name="is_active" ${checked(p?.is_active??true)}> Produkt widoczny w sklepie</label></div>
   <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz produkt</button></div></form>`);
@@ -321,7 +321,7 @@ function productForm(id=null){
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
       let url=p?.image_url||null;const file=d.get('photo');if(file?.size)url=await uploadImage(file);
-      const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id'),description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),sku:String(d.get('sku')||'').trim()||null,image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
+      const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id'),description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
       if(!editing)payload.slug=defaultSlug(payload.name);
       const result=editing?await sb.from('products').update(payload).eq('id',id).select('id').single():await sb.from('products').insert(payload).select('id').single();
       if(result.error)throw result.error;
@@ -351,7 +351,6 @@ function variantForm(id=null,defaultProductId=''){
   <div class="field span2"><label>Nazwa wariantu *</label><input name="name" required maxlength="120" value="${escapeHTML(v?.name||'')}"></div>
   <div class="field"><label>Kolor</label><input name="color" maxlength="100" value="${escapeHTML(v?.color||'')}"></div>
   <div class="field"><label>Rozmiar</label><input name="size" maxlength="100" value="${escapeHTML(v?.size||'')}"></div>
-  <div class="field"><label>SKU (unikalny)</label><input name="sku" maxlength="100" value="${escapeHTML(v?.sku||'')}"></div>
   <div class="field"><label>Cena wariantu (zł) *</label><input name="price" type="number" min="0" step="0.01" required value="${v?.price??0}"></div>
   <div class="field"><label>Widoczność</label><select name="is_active"><option value="true" ${selected(String(v?.is_active??true),'true')}>Aktywny</option><option value="false" ${selected(String(v?.is_active??true),'false')}>Ukryty</option></select></div>
   <div class="field span2"><label>Zdjęcie wariantu (opcjonalne)</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/avif"></div>
@@ -360,7 +359,7 @@ function variantForm(id=null,defaultProductId=''){
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
       let url=v?.image_url||null;if(d.get('photo')?.size)url=await uploadImage(d.get('photo'));
-      const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),sku:String(d.get('sku')||'').trim()||null,price:Number(d.get('price')),image_url:url||null,is_active:d.get('is_active')==='true'};
+      const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),price:Number(d.get('price')),image_url:url||null,is_active:d.get('is_active')==='true'};
       const {error}=editing?await sb.from('product_variants').update(payload).eq('id',id):await sb.from('product_variants').insert(payload);
       if(error)throw error;closeModal();notify('Wariant zapisany.');await loadCatalog();
     }catch(err){fail(err)}finally{setLoading(b,false)}
