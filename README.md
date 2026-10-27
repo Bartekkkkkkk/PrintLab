@@ -1,20 +1,57 @@
-# PrintLab — strona statyczna na Vercel (bez instalacji)
+# PrintLab — sklep + panel administratora + Supabase (wersja 2)
+
+Statyczny frontend przeznaczony do hostowania na GitHub + Vercel, z danymi przechowywanymi w Supabase. **Bez Node.js, npm, procesu kompilacji ani frameworka.**
+
+## Co jest zaimplementowane
+
+- Responsywny katalog produktów (duże monitory, laptopy, tablet, telefon), bez górnego szarego paska.
+- Kategorie główne i podkategorie (na razie 1 poziom) tworzone i edytowane przez administratora.
+- Produkty: nazwa, opis, kategoria, cena bazowa, zdjęcie, SKU, widoczność.
+- Warianty/podprodukty: nazwa, kolor, rozmiar, cena, osobny SKU, osobne zdjęcie, stan magazynowy i widoczność.
+- Dynamiczny katalog, filtrowanie, wyszukiwarka i sortowanie.
+- Supabase Auth: rejestracja, logowanie, reset hasła, wylogowywanie.
+- Baza PostgreSQL: profile klientów, adresy, kategorie, produkty, warianty, zamówienia i pozycje zamówień.
+- Admin: tworzenie/edycja/usuwanie kategorii, produktów i wariantów, przegląd klientów i zamówień, zmiana statusu zamówień.
+- Supabase Storage: zdjęcia produktów; wgrywanie ograniczone polityką RLS do administratora.
+- RLS: publiczny odczyt opublikowanych produktów, prywatne profile i zamówienia, edycja katalogu tylko przez administratora.
+- Koszyk przeglądarkowy z wyborem wariantu, wyświetlaniem dostępności i cen.
+
+**Płatności i InPost nie są jeszcze zintegrowane.** Przycisk finalizacji zamówienia jest celowo wyłączony. W bazie jest bezpieczna struktura do zamówień, ale nie istnieje jeszcze mechanizm checkoutu ani automatyczne wystawianie etykiet. Nie ma pozorowanych potwierdzeń zapłaty.
+
+## Jednorazowa konfiguracja Supabase (nie da się jej pominąć przy nowej bazie)
+
+1. Utwórz projekt w https://supabase.com/dashboard .
+2. Otwórz **SQL Editor** → **New query**. Skopiuj **cały** `supabase/schema.sql`, uruchom go jeden raz (`Run`). Spowoduje to utworzenie tabel, uprawnień RLS i bucketu zdjęć `product-images`.
+3. Otwórz **Project Settings → API** / **Connect** i skopiuj:
+   - Project URL, np. `https://abcdef.supabase.co`
+   - klucz **publishable** (`sb_publishable_...`) lub legacy `anon` key.
+4. Edytuj **dwie** linie w `config.js`. URL i klucz publishable/anon mogą występować w kodzie frontendowym — chronią je polityki RLS. **Nigdy** nie wpisuj `service_role` ani `sb_secret_...`.
+5. W **Authentication → Providers → Email** włącz Email Auth; ustal, czy wymagane będzie potwierdzenie e-mail.
+6. W **Authentication → URL Configuration** dodaj domenę produkcyjną Vercel do dozwolonych redirect URLs (np. `https://twojsklep.vercel.app/**`) i ustaw odpowiedni Site URL. Jest to potrzebne do linków logowania/resetu hasła.
+7. Opublikuj stronę i **zarejestruj swoje konto**. Jeśli wymagane, potwierdź e-mail.
+8. Uruchom w SQL Editor skrypt `supabase/seed-admin.sql` **po zastąpieniu `WPISZ_EMAIL_ADMINA` swoim e-mailem**. Upewnij się, że zwraca jeden wiersz.
+9. Wyloguj się i zaloguj ponownie (lub odśwież stronę). Pojawi się zakładka **Panel administratora**.
+10. Utwórz kategorię → opcjonalną podkategorię → produkt → jego warianty. Produkty staną się widoczne w sklepie.
 
 ## GitHub + Vercel
 
-1. Usuń pliki starej wersji ze swojego repozytorium GitHub (zwłaszcza `package.json`, stary `vercel.json`, pliki konfiguracji frameworków i katalogi `src`, `public` jeśli były z poprzednich wersji).
-2. Wgraj pliki z tego archiwum **do katalogu głównego repozytorium**.
-3. Vercel automatycznie wykryje zmianę na GitHub i spróbuje wdrożyć stronę. Jeżeli istniejący projekt Vercel ma błędną konfigurację lub zmienne środowiskowe, sam kod nie gwarantuje naprawy. W takim przypadku najszybciej utworzyć NOWY projekt Vercel przez import repozytorium z ustawieniami domyślnymi.
-4. Alternatywa bez GitHub: wrzuć ZIP na https://vercel.com/drop — to osobny projekt, bez wcześniejszego ustawienia budowania.
+1. Rozpakuj ZIP, wgraj **zawartość** folderu (nie jego katalog nadrzędny) do **głównego katalogu** repozytorium.
+2. Vercel → Add New → Project → Import Git Repository.
+3. Framework Preset: **Other**. Build Command: **pusty / skip build**, Output Directory: `.` (katalog projektu). Root Directory: `./`.
+4. Deploy. Nie potrzebujesz `npm install` ani `package.json`. W tej paczce nie ma `vercel.json` ani komend budowania, aby uniknąć konfliktów konfiguracji.
+5. Kolejny push do `main` automatycznie aktualizuje witrynę.
 
-W paczce nie ma `package.json`, zależności npm ani komendy budowania. `vercel.json` ustawia framework `Other`, pomija build i publikuje katalog główny.
+Jeśli stary projekt Vercel wciąż zgłasza **`Cannot read properties of undefined (reading 'fsPath')`**, jest to problem etapu budowania projektu, nie samego HTML. Zalecane jest zaimportowanie tego repozytorium do **nowego projektu Vercel** z presetem Other i bez kroku kompilacji — tego błędu nie da się zagwarantowanie naprawić kodem strony, jeśli pochodzi z konfiguracji usługi.
 
-## Co działa
+## Bezpieczeństwo i kolejne kroki
 
-- Strona skupiona na brelokach w stylistyce Twojego zrzutu ekranu, z logo PrintLab.
-- Przykładowe produkty, filtrowanie, wyszukiwanie, sortowanie i koszyk (localStorage).
-- Interaktywne podglądy i responsywność.
+- Konta i hasła obsługuje Supabase Auth — hasła nigdy nie trafiają do naszych własnych tabel ani `localStorage`.
+- W Supabase **anon/publishable key jest publiczny**. Dostęp do danych ogranicza RLS. Po wykonaniu SQL warto przetestować uprawnienia kontem klienta i admina.
+- Nie dodawaj bezpośrednio insertów do `orders` z przeglądarki ani nie pozwalaj frontendowi samemu ustalać ceny zamówienia. Checkout wymaga funkcji serwerowej lub Edge Function, która pobiera ceny z bazy, sprawdza dostępność i potwierdza płatność webhookiem operatora.
+- Przy większym sklepie warto dodać historię operacji administracyjnych, kopie zapasowe, ograniczenia uploadów, usuwanie niewykorzystanych zdjęć i testy uprawnień.
+- Uzupełnij prawdziwe dane kontaktowe, regulamin, politykę prywatności, politykę reklamacji i informacje o kosztach i terminach dostawy.
+- W obecnej wersji adresy mają gotową tabelę i RLS; formularz książki adresowej oraz zapisywanie zamówień zostaną podłączone przy implementacji checkoutu.
 
-## Czego jeszcze nie ma
+## Pliki
 
-To frontend demonstracyjny, **nie sklep gotowy do sprzedaży**. Logowanie, rejestracja, panel admina, prawdziwe zamówienia, płatności i InPost wymagają osobnej implementacji. Produkty, ceny, kontakt i grafiki są przykładowe i należy je zastąpić prawdziwymi przed sprzedażą.
+`index.html` – układ, `styles.css` – RWD i wygląd, `app.js` – logika sklepu/admina, `config.js` – publiczne połączenie Supabase, `assets/logo.png` – Twoje logo, `supabase/schema.sql` – struktura i RLS, `supabase/seed-admin.sql` – pierwsze konto admina.

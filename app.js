@@ -1,0 +1,343 @@
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+
+const $ = id => document.getElementById(id);
+const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cash = value => Number(value || 0).toLocaleString('pl-PL',{style:'currency',currency:'PLN'});
+const shortDate = value => new Date(value).toLocaleString('pl-PL',{dateStyle:'medium'});
+const selected = (a,b) => String(a??'')===String(b??'')?'selected':'';
+const checked = v => v?'checked':'';
+const niceError = e => e?.message?.replace('duplicate key value violates unique constraint', 'Ta wartość już istnieje (np. SKU lub nazwa URL).') || 'Wystąpił błąd.';
+const configured = /^https:\/\/[^\s]+\.supabase\.co\/?$/.test(SUPABASE_URL.trim()) && SUPABASE_ANON_KEY.length > 30 && !SUPABASE_ANON_KEY.includes('WPISZ');
+let sb = null, user = null, profile = null, isAdmin = false;
+let categories = [], products = [], variants = [], orders = [], customers = [];
+let currentPage = 'shop', adminTab = 'categories', categoryFilter = 'all', subcategoryFilter = 'all';
+let cart = safeCart();
+function safeCart(){try{return JSON.parse(localStorage.getItem('printlab-cart-v2')||'[]').filter(i=>i.id&&i.variantId&&i.qty>0)}catch{return []}}
+function saveCart(){localStorage.setItem('printlab-cart-v2',JSON.stringify(cart));updateCartCount()}
+function notify(msg){$('toast').textContent=msg;$('toast').classList.add('visible');clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('toast').classList.remove('visible'),3500)}
+function fail(error){console.error(error);notify(niceError(error))}
+function setLoading(button,loading){button.disabled=loading;button.dataset.original ??= button.textContent;button.textContent=loading?'Zapisywanie…':button.dataset.original}
+function categoryName(id){return categories.find(c=>c.id===id)?.name||'Bez kategorii'}
+function productName(id){return products.find(p=>p.id===id)?.name||'Produkt'}
+function variantName(id){return variants.find(v=>v.id===id)?.name||'Wariant'}
+function defaultSlug(name){return String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ł/g,'l').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)+'-'+crypto.randomUUID().slice(0,8)}
+function cleanUrl(u){let t=String(u||'').trim();try{let x=new URL(t);return ['https:','http:'].includes(x.protocol)?x.href:''}catch{return ''}}
+function backdrop(show){$('screenOverlay').classList.toggle('hidden',!show)}
+function modal(html){$('modalBody').innerHTML=html;$('modalWrap').classList.remove('hidden');backdrop(true);document.body.style.overflow='hidden'}
+function closeModal(){$('modalWrap').classList.add('hidden');$('cartDrawer').classList.add('hidden');backdrop(false);document.body.style.overflow=''}
+function showPage(page){
+  if(page==='admin'&&!isAdmin){notify('Brak uprawnień administratora.');return}
+  if(page==='orders'&&!user){showAuth();return}
+  currentPage=page;['shop','admin','orders','account'].forEach(p=>$(p+'View').classList.toggle('hidden',p!==page));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.id===({shop:'goShop',admin:'goAdmin',orders:'goOrders'}[page])));
+  $('mobileMenu').classList.add('hidden');$('mobileNavButton').setAttribute('aria-expanded','false');
+  if(page==='admin')renderAdmin();if(page==='orders')loadOrders();if(page==='account')renderAccount();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function updateAuthUI(){
+  document.querySelectorAll('.admin-only').forEach(el=>el.classList.toggle('hidden',!isAdmin));
+  $('authButton').textContent=user?'Moje konto':'Zaloguj się';
+}
+async function loadCatalog(){
+  if(!sb){renderCatalog();return}
+  const [c,p,v]=await Promise.all([
+    sb.from('categories').select('*').order('position').order('name'),
+    sb.from('products').select('*').order('created_at',{ascending:false}),
+    sb.from('product_variants').select('*').order('created_at')
+  ]);
+  for(const r of [c,p,v])if(r.error)throw r.error;
+  categories=c.data||[];products=p.data||[];variants=v.data||[];
+  renderCatalog();if(currentPage==='admin')renderAdmin();
+}
+function categoriesDescendant(id){return categories.filter(c=>c.parent_id===id).map(c=>c.id)}
+function renderCatalog(){
+  const visibleCats=categories.filter(c=>c.is_active&&(!c.parent_id));
+  $('categoryBar').innerHTML=`<button type="button" class="category-chip ${categoryFilter==='all'?'chosen':''}" data-cat="all">Wszystkie</button>`+
+    visibleCats.map(c=>`<button type="button" class="category-chip ${categoryFilter===c.id?'chosen':''}" data-cat="${c.id}">${escapeHTML(c.name)}</button>`).join('');
+  const children=categories.filter(c=>c.parent_id===categoryFilter&&c.is_active);
+  $('subcategoryBar').classList.toggle('hidden',!children.length);
+  $('subcategoryBar').innerHTML=`<button type="button" class="subchip ${subcategoryFilter==='all'?'chosen':''}" data-subcat="all">Wszystkie</button>`+
+    children.map(c=>`<button type="button" class="subchip ${subcategoryFilter===c.id?'chosen':''}" data-subcat="${c.id}">${escapeHTML(c.name)}</button>`).join('');
+  let list=products.filter(p=>p.is_active && (categoryFilter==='all' || (subcategoryFilter!=='all'?p.category_id===subcategoryFilter:[categoryFilter,...categoriesDescendant(categoryFilter)].includes(p.category_id))));
+  const q=$('searchProducts').value.trim().toLowerCase();
+  if(q)list=list.filter(p=>(p.name+' '+p.description+' '+categoryName(p.category_id)).toLowerCase().includes(q));
+  const lowest=p=>{const prices=variants.filter(v=>v.product_id===p.id&&v.is_active).map(v=>Number(v.price));return prices.length?Math.min(...prices):Number(p.base_price)};
+  const sort=$('sortProducts').value;
+  if(sort==='priceUp')list.sort((a,b)=>lowest(a)-lowest(b));
+  if(sort==='priceDown')list.sort((a,b)=>lowest(b)-lowest(a));
+  if(sort==='alpha')list.sort((a,b)=>a.name.localeCompare(b.name,'pl'));
+  $('productCounter').textContent=`${list.length} produktów`;
+  $('emptyCatalog').classList.toggle('hidden',!!list.length);
+  $('productGrid').innerHTML=list.map(p=>{
+    const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
+    const price=vs.length?Math.min(...vs.map(v=>Number(v.price))):Number(p.base_price);
+    const availability=vs.reduce((s,v)=>s+v.stock,0);
+    return `<article class="product-card"><div class="product-photo">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" loading="lazy" alt="${escapeHTML(p.name)}">`:`<span class="placeholder-product">PL<span>.</span></span>`}</div>
+      <div class="product-details"><span class="product-category-label">${escapeHTML(categoryName(p.category_id))}${availability?'':' · Brak w magazynie'}</span><h3>${escapeHTML(p.name)}</h3><p>${escapeHTML(p.description||'Produkt PrintLab — druk 3D.').slice(0,160)}</p>
+      <div class="product-bottom"><span class="product-price">${vs.length>1?'od ':''}${cash(price)}</span><button type="button" class="small-button" data-view-product="${p.id}">Zobacz</button></div></div></article>`;
+  }).join('');
+  if(!configured){
+    $('productGrid').innerHTML='';$('emptyCatalog').classList.add('hidden');
+    if(!$('setupNote')){
+      const message=document.createElement('div');message.className='config-warning';message.id='setupNote';
+      message.innerHTML='<strong>Podłącz Supabase, aby uruchomić katalog.</strong><br>Uzupełnij <code>config.js</code> oraz wykonaj skrypt <code>supabase/schema.sql</code>. Wszystkie dane będą później pobierane bezpośrednio z bazy.';
+      $('productGrid').before(message);
+    }
+  }else $('setupNote')?.remove();
+}
+async function refreshAuth(){
+  if(!sb)return;
+  const {data:{user:current},error}=await sb.auth.getUser();if(error)console.warn('Auth:',error.message);
+  user=current;isAdmin=false;profile=null;
+  if(user){
+    const [a,p]=await Promise.all([sb.from('admins').select('user_id').eq('user_id',user.id).maybeSingle(),sb.from('profiles').select('*').eq('id',user.id).maybeSingle()]);
+    if(a.error)console.warn(a.error);if(p.error)console.warn(p.error);
+    isAdmin=!!a.data;profile=p.data;
+  }
+  updateAuthUI();await loadCatalog();
+  if(currentPage==='admin'&&!isAdmin)showPage('shop');
+  if(currentPage==='account')renderAccount();
+}
+function showAuth(mode='login'){
+  if(!sb){notify('Najpierw skonfiguruj Supabase w pliku config.js.');return}
+  const isRegister=mode==='register',isReset=mode==='reset';
+  modal(`<h2 id="modalTitle">${isReset?'Resetowanie hasła':isRegister?'Utwórz konto':'Witaj w PrintLab'}</h2><p class="modal-desc">${isReset?'Otrzymasz wiadomość z linkiem do ustawienia nowego hasła.':isRegister?'Zarejestruj się, aby mieć konto klienta.':'Zaloguj się do swojego konta.'}</p>
+    <form id="authForm" class="form-grid">${isRegister?'<div class="field span2"><label for="fullName">Imię / nazwa użytkownika</label><input id="fullName" maxlength="100" autocomplete="name"></div>':''}
+      <div class="field span2"><label for="loginEmail">E-mail</label><input id="loginEmail" type="email" required autocomplete="email"></div>
+      ${isReset?'':`<div class="field span2"><label for="loginPassword">Hasło</label><input id="loginPassword" type="password" minlength="8" required autocomplete="${isRegister?'new-password':'current-password'}"></div>`}
+      <div class="field span2"><button type="submit" class="primary-btn full">${isReset?'Wyślij link':isRegister?'Zarejestruj':'Zaloguj'}</button></div></form>
+    <div class="auth-options">${isRegister?'<button type="button" id="switchToLogin">Mam już konto</button>':isReset?'<button type="button" id="switchToLogin">Wróć do logowania</button>':'<button type="button" id="switchToRegister">Zarejestruj się</button> · <button type="button" id="switchToReset">Nie pamiętam hasła</button>'}</div>`);
+  $('authForm').addEventListener('submit',async e=>{
+    e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);
+    const email=$('loginEmail').value.trim(),password=$('loginPassword')?.value;
+    try{
+      let result;
+      if(isRegister)result=await sb.auth.signUp({email,password,options:{data:{display_name:$('fullName').value.trim()}}});
+      else if(isReset)result=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+      else result=await sb.auth.signInWithPassword({email,password});
+      if(result.error)throw result.error;
+      closeModal();notify(isRegister?'Sprawdź skrzynkę e-mail, jeśli wymagane jest potwierdzenie.':isReset?'Sprawdź pocztę e-mail.':'Zalogowano.');
+      await refreshAuth();
+    }catch(err){fail(err)}finally{setLoading(b,false)}
+  });
+  $('switchToLogin')?.addEventListener('click',()=>showAuth('login'));
+  $('switchToRegister')?.addEventListener('click',()=>showAuth('register'));
+  $('switchToReset')?.addEventListener('click',()=>showAuth('reset'));
+}
+async function showAccountMenu(){if(!user){showAuth();return}showPage('account')}
+function renderAccount(){
+  if(!user){$('accountContent').innerHTML='<p>Zaloguj się, aby zarządzać kontem.</p>';return}
+  $('accountContent').innerHTML=`<h2>Twoje dane</h2><p class="subtle">Konto: ${escapeHTML(user.email)}</p>
+  <form id="profileForm" class="form-grid" style="max-width:500px"><div class="field span2"><label>Imię / nazwa</label><input name="display_name" maxlength="100" value="${escapeHTML(profile?.display_name||'')}"></div>
+  <div class="field span2"><label>Telefon</label><input name="phone" maxlength="30" value="${escapeHTML(profile?.phone||'')}"></div>
+  <div class="field span2"><button type="submit" class="primary-btn">Zapisz dane</button></div></form>
+  <hr style="border:0;border-top:1px solid #eee;margin:24px 0"><button type="button" class="secondary-btn" id="logoutButton">Wyloguj się</button>`;
+  $('profileForm').addEventListener('submit',async e=>{e.preventDefault();let fd=new FormData(e.target);const {error}=await sb.from('profiles').update({display_name:String(fd.get('display_name')||'').trim(),phone:String(fd.get('phone')||'').trim()}).eq('id',user.id);if(error)fail(error);else{notify('Dane zapisane.');profile={...profile,display_name:fd.get('display_name'),phone:fd.get('phone')}}});
+  $('logoutButton').addEventListener('click',async()=>{let {error}=await sb.auth.signOut();if(error)fail(error);else{user=null;isAdmin=false;updateAuthUI();showPage('shop');await loadCatalog();notify('Wylogowano.')}});
+}
+function productModal(productId){
+  const p=products.find(x=>x.id===productId);if(!p)return;
+  const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
+  modal(`<span class="section-kicker">${escapeHTML(categoryName(p.category_id))}</span><h2 id="modalTitle">${escapeHTML(p.name)}</h2>
+  <div class="product-modal-pic" id="modalProductPic">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>'}</div>
+  <p class="modal-desc">${escapeHTML(p.description||'Produkt PrintLab.')}</p>
+  ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}" ${v.stock<1?'disabled':''}>${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)} ${v.stock===0?'(niedostępny)':''}</option>`).join('')}</select><p id="variantStock" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
+  if(!vs.length)return;
+  const picker=$('variantPicker');picker.value=vs.find(v=>v.stock>0)?.id||vs[0].id;
+  const update=()=>{
+    const v=vs.find(x=>x.id===picker.value);if(!v)return;
+    $('variantStock').textContent=`Stan magazynowy: ${v.stock} szt. · Cena: ${cash(v.price)}`;
+    $('addVariantToCart').disabled=v.stock<1;
+    const img=cleanUrl(v.image_url)||cleanUrl(p.image_url);
+    $('modalProductPic').innerHTML=img?`<img src="${escapeHTML(img)}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>';
+  };
+  picker.addEventListener('change',update);update();
+  $('addVariantToCart').addEventListener('click',()=>{addToCart(p.id,picker.value);closeModal()});
+}
+function addToCart(productId,variantId){
+  const v=variants.find(x=>x.id===variantId&&x.product_id===productId);
+  if(!v||!v.is_active||v.stock<1){notify('Ten wariant jest niedostępny.');return}
+  const row=cart.find(i=>i.id===productId&&i.variantId===variantId);
+  if(row){if(row.qty>=v.stock){notify('Brak większej ilości w magazynie.');return}row.qty++}else cart.push({id:productId,variantId,qty:1});
+  saveCart();notify('Dodano do koszyka.');
+}
+function updateCartCount(){let n=cart.reduce((sum,x)=>sum+x.qty,0);$('cartCount').textContent=`(${n})`;$('drawerCount').textContent=`(${n})`}
+function openCart(){$('cartDrawer').classList.remove('hidden');backdrop(true);document.body.style.overflow='hidden';renderCart()}
+function renderCart(){
+  cart=cart.filter(i=>products.some(p=>p.id===i.id)&&variants.some(v=>v.id===i.variantId));saveCart();
+  $('cartItems').innerHTML=cart.length?cart.map(i=>{const v=variants.find(x=>x.id===i.variantId);return `<div class="cart-line"><div><strong>${escapeHTML(productName(i.id))}</strong><small>${escapeHTML(v.name)} · ${cash(v.price)} / szt.</small><div class="qty-box"><button data-cart-qty="${v.id}" data-change="-1">−</button><span>${i.qty}</span><button data-cart-qty="${v.id}" data-change="1">+</button><button class="remove" data-cart-remove="${v.id}">Usuń</button></div></div><strong>${cash(Number(v.price)*i.qty)}</strong></div>`}).join(''):'<div class="empty-state"><h3>Koszyk jest pusty</h3><p>Dodaj produkt z katalogu.</p></div>';
+  $('cartTotal').textContent=cash(cart.reduce((s,i)=>s+Number(variants.find(v=>v.id===i.variantId)?.price||0)*i.qty,0));
+}
+async function loadOrders(){
+  if(!sb||!user){$('ordersContent').innerHTML='<p>Zaloguj się, aby zobaczyć zamówienia.</p>';return}
+  const {data,error}=await sb.from('orders').select('id,status,payment_status,total,created_at,inpost_tracking').eq('user_id',user.id).order('created_at',{ascending:false});
+  if(error){fail(error);return}
+  $('ordersContent').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Data</th><th>Status</th><th>Płatność</th><th>Kwota</th><th>InPost</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${shortDate(o.created_at)}</td><td>${escapeHTML(o.status)}</td><td>${escapeHTML(o.payment_status)}</td><td>${cash(o.total)}</td><td>${escapeHTML(o.inpost_tracking||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state" style="margin:0"><h3>Brak zamówień</h3><p>Twoje przyszłe zamówienia pojawią się tutaj po uruchomieniu płatności.</p></div>';
+}
+// --- Panel administratora: wszystkie zapisy wykonuje Supabase i egzekwuje RLS. ---
+function ensureAdmin(){if(!sb||!isAdmin)throw new Error('Nie masz uprawnień administratora.')}
+function selectOptions(rows,value='',placeholder='Wybierz…'){
+  return `<option value="">${escapeHTML(placeholder)}</option>`+rows.map(r=>`<option value="${r.id}" ${selected(r.id,value)}>${escapeHTML(r.label||r.name)}</option>`).join('');
+}
+function headRow(title,actionLabel,action){return `<div class="admin-topline"><h2>${title}</h2>${actionLabel?`<button type="button" class="primary-btn" data-admin-action="${action}">+ ${actionLabel}</button>`:''}</div>`}
+function renderAdmin(){
+  if(!isAdmin)return;
+  [...$('adminTabs').children].forEach(b=>b.classList.toggle('selected',b.dataset.tab===adminTab));
+  const target=$('adminContent');
+  if(adminTab==='categories'){
+    const rows=categories.slice().sort((a,b)=>(a.parent_id?1:0)-(b.parent_id?1:0)||a.position-b.position||a.name.localeCompare(b.name));
+    target.innerHTML=headRow('Kategorie i podkategorie','Dodaj kategorię','category-add')+
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Nazwa</th><th>Typ</th><th>Status</th><th>Kolejność</th><th>Akcje</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${c.parent_id?'↳ ':''}${escapeHTML(c.name)}</strong></td><td class="muted">${c.parent_id?'Podkategoria · '+escapeHTML(categoryName(c.parent_id)):'Kategoria główna'}</td><td><span class="status ${c.is_active?'':'off'}">${c.is_active?'Aktywna':'Ukryta'}</span></td><td>${c.position}</td><td class="actions"><button data-admin-action="category-edit" data-id="${c.id}">Edytuj</button><button data-admin-action="category-delete" data-id="${c.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+  }else if(adminTab==='products'){
+    target.innerHTML=headRow('Produkty','Dodaj produkt','product-add')+
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong><br><small>${escapeHTML(p.sku||'Bez SKU')}</small></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button data-admin-action="product-delete" data-id="${p.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+  }else if(adminTab==='variants'){
+    target.innerHTML=headRow('Warianty / podprodukty',products.length?'Dodaj wariant':'','variant-add')+
+      `<p class="subtle">Wariant posiada własny kolor, rozmiar, SKU, cenę, stan magazynowy i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>SKU</th><th>Cena</th><th>Stan</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${escapeHTML(v.sku||'—')}</td><td>${cash(v.price)}</td><td>${v.stock} szt.</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+  }else if(adminTab==='orders'){
+    target.innerHTML=headRow('Zamówienia')+'<p class="subtle">Zamówienia tworzone przez bezpieczny checkout pojawią się tutaj po podłączeniu płatności.</p><div id="adminOrderTable">Wczytywanie…</div>';
+    sb.from('orders').select('id,user_id,status,payment_status,total,created_at,inpost_tracking').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
+      if(error){$('adminOrderTable').textContent=niceError(error);return}
+      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Klient</th><th>Wartość</th><th>Status</th><th>Data</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${escapeHTML(o.user_id.slice(0,8))}</td><td>${cash(o.total)}</td><td><select data-order-status="${o.id}">${['new','pending_payment','paid','in_production','shipped','delivered','cancelled','refunded'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select></td><td>${shortDate(o.created_at)}</td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
+    });
+  }else if(adminTab==='customers'){
+    target.innerHTML=headRow('Klienci')+'<p class="subtle">Lista profili użytkowników zarejestrowanych przez Supabase Auth.</p><div id="adminCustomerTable">Wczytywanie…</div>';
+    sb.from('profiles').select('id,email,display_name,phone,created_at').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
+      if(error){$('adminCustomerTable').textContent=niceError(error);return}
+      $('adminCustomerTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Użytkownik</th><th>E-mail</th><th>Telefon</th><th>Utworzono</th></tr></thead><tbody>${data.map(p=>`<tr><td>${escapeHTML(p.display_name||'—')}</td><td>${escapeHTML(p.email)}</td><td>${escapeHTML(p.phone||'—')}</td><td>${shortDate(p.created_at)}</td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zarejestrowanych klientów.</p>';
+    });
+  }
+}
+function categoryForm(id=null){
+  ensureAdmin();const c=categories.find(c=>c.id===id),editing=!!c;
+  // Jeden poziom podkategorii: tylko kategorie główne mogą być rodzicem.
+  const parents=categories.filter(x=>!x.parent_id&&x.id!==id);
+  modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} kategorię</h2><p class="modal-desc">Możesz utworzyć kategorię główną albo wybrać nadrzędną i utworzyć podkategorię.</p>
+  <form id="categoryForm" class="form-grid"><div class="field span2"><label>Nazwa *</label><input name="name" required maxlength="90" value="${escapeHTML(c?.name||'')}"></div>
+  <div class="field span2"><label>Kategoria nadrzędna</label><select name="parent_id">${selectOptions(parents,c?.parent_id,'Brak — kategoria główna')}</select></div>
+  <div class="field span2"><label>Opis</label><textarea name="description">${escapeHTML(c?.description||'')}</textarea></div>
+  <div class="field"><label>Kolejność</label><input type="number" name="position" value="${c?.position??0}" min="0" max="10000"></div>
+  <div class="field"><label>Widoczność</label><select name="is_active"><option value="true" ${selected(String(c?.is_active??true),'true')}>Widoczna</option><option value="false" ${selected(String(c?.is_active??true),'false')}>Ukryta</option></select></div>
+  <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz kategorię</button></div></form>`);
+  $('categoryForm').addEventListener('submit',async e=>{
+    e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);let d=Object.fromEntries(new FormData(e.target));
+    let payload={name:d.name.trim(),parent_id:d.parent_id||null,description:d.description.trim(),position:Number(d.position||0),is_active:d.is_active==='true'};
+    if(!editing)payload.slug=defaultSlug(payload.name);
+    const query=editing?sb.from('categories').update(payload).eq('id',id):sb.from('categories').insert(payload);
+    const {error}=await query;if(error)fail(error);else{closeModal();notify('Kategoria zapisana.');await loadCatalog()};setLoading(b,false);
+  });
+}
+function productForm(id=null){
+  ensureAdmin();const p=products.find(p=>p.id===id),editing=!!p;
+  if(!categories.length){notify('Najpierw dodaj kategorię.');adminTab='categories';renderAdmin();return}
+  const opts=categories.map(c=>({id:c.id,label:(c.parent_id?categoryName(c.parent_id)+' → ':'')+c.name}));
+  modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} produkt</h2><p class="modal-desc">Po dodaniu produktu powstanie domyślny wariant. Kolejne kolory i rozmiary dodasz w sekcji Warianty.</p>
+  <form id="productForm" class="form-grid"><div class="field span2"><label>Nazwa produktu *</label><input name="name" required maxlength="180" value="${escapeHTML(p?.name||'')}"></div>
+  <div class="field span2"><label>Kategoria / podkategoria *</label><select name="category_id" required>${selectOptions(opts,p?.category_id,'Wybierz kategorię')}</select></div>
+  <div class="field span2"><label>Opis produktu</label><textarea name="description">${escapeHTML(p?.description||'')}</textarea></div>
+  <div class="field"><label>Cena podstawowa (zł) *</label><input name="base_price" type="number" min="0" max="9999999" step="0.01" required value="${p?.base_price??''}"></div>
+  <div class="field"><label>SKU (opcjonalnie)</label><input name="sku" maxlength="100" value="${escapeHTML(p?.sku||'')}"></div>
+  ${editing?'':`<div class="field"><label>Początkowy stan wariantu domyślnego</label><input name="initial_stock" type="number" min="0" max="999999" value="0"></div>`}
+  <div class="field span2"><label>Zdjęcie produktu (JPG, PNG, WebP, AVIF, do 5 MB)</label><input name="photo" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><span class="tiny">Wysyłane do Supabase Storage. Bez plików lokalnych na Vercel.</span></div>
+  <div class="field span2"><label>Adres zdjęcia (opcjonalnie, https://)</label><input name="image_url" type="url" value="${escapeHTML(p?.image_url||'')}"></div>
+  <div class="field span2"><label class="check-row"><input type="checkbox" name="is_active" ${checked(p?.is_active??true)}> Produkt widoczny w sklepie</label></div>
+  <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz produkt</button></div></form>`);
+  $('productForm').addEventListener('submit',async e=>{
+    e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
+    try{
+      let url=cleanUrl(d.get('image_url'));const file=d.get('photo');if(file?.size)url=await uploadImage(file);
+      const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id'),description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),sku:String(d.get('sku')||'').trim()||null,image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
+      if(!editing)payload.slug=defaultSlug(payload.name);
+      const result=editing?await sb.from('products').update(payload).eq('id',id).select('id').single():await sb.from('products').insert(payload).select('id').single();
+      if(result.error)throw result.error;
+      if(!editing){
+        const v={product_id:result.data.id,name:'Standard',price:payload.base_price,stock:Math.max(0,Math.floor(Number(d.get('initial_stock')||0))),is_active:true};
+        const res=await sb.from('product_variants').insert(v);
+        if(res.error){await sb.from('products').delete().eq('id',result.data.id);throw new Error('Nie udało się utworzyć wariantu domyślnego: '+niceError(res.error))}
+      }
+      closeModal();notify('Produkt zapisany.');await loadCatalog();
+    }catch(err){fail(err)}finally{setLoading(b,false)}
+  });
+}
+async function uploadImage(file){
+  if(file.size>5*1024*1024)throw new Error('Plik przekracza 5 MB.');
+  if(!['image/jpeg','image/png','image/webp','image/avif'].includes(file.type))throw new Error('Niedozwolony typ pliku.');
+  const ext=({'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/avif':'avif'})[file.type];
+  const path=`${crypto.randomUUID()}.${ext}`;
+  const {error}=await sb.storage.from('product-images').upload(path,file,{contentType:file.type,upsert:false,cacheControl:'3600'});
+  if(error)throw error;
+  const {data}=sb.storage.from('product-images').getPublicUrl(path);return data.publicUrl;
+}
+function variantForm(id=null,defaultProductId=''){
+  ensureAdmin();const v=variants.find(v=>v.id===id),editing=!!v;
+  if(!products.length){notify('Najpierw dodaj produkt.');return}
+  modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} wariant / podprodukt</h2><p class="modal-desc">Np. czarny, czerwony, 50 mm, 80 mm — każdy wariant z własną ceną, zdjęciem i stanem.</p>
+  <form id="variantForm" class="form-grid"><div class="field span2"><label>Produkt nadrzędny *</label><select name="product_id" required>${selectOptions(products,v?.product_id||defaultProductId,'Wybierz produkt')}</select></div>
+  <div class="field span2"><label>Nazwa wariantu *</label><input name="name" required maxlength="120" value="${escapeHTML(v?.name||'')}"></div>
+  <div class="field"><label>Kolor</label><input name="color" maxlength="100" value="${escapeHTML(v?.color||'')}"></div>
+  <div class="field"><label>Rozmiar</label><input name="size" maxlength="100" value="${escapeHTML(v?.size||'')}"></div>
+  <div class="field"><label>SKU (unikalny)</label><input name="sku" maxlength="100" value="${escapeHTML(v?.sku||'')}"></div>
+  <div class="field"><label>Cena wariantu (zł) *</label><input name="price" type="number" min="0" step="0.01" required value="${v?.price??0}"></div>
+  <div class="field"><label>Stan magazynowy *</label><input name="stock" type="number" min="0" max="999999" required value="${v?.stock??0}"></div>
+  <div class="field"><label>Widoczność</label><select name="is_active"><option value="true" ${selected(String(v?.is_active??true),'true')}>Aktywny</option><option value="false" ${selected(String(v?.is_active??true),'false')}>Ukryty</option></select></div>
+  <div class="field span2"><label>Zdjęcie wariantu (opcjonalne)</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/avif"></div>
+  <div class="field span2"><label>URL zdjęcia (opcjonalnie)</label><input type="url" name="image_url" value="${escapeHTML(v?.image_url||'')}"></div>
+  <div class="form-buttons field span2"><button type="button" class="secondary-btn" data-modal-cancel>Anuluj</button><button type="submit" class="primary-btn">Zapisz wariant</button></div></form>`);
+  $('variantForm').addEventListener('submit',async e=>{
+    e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
+    try{
+      let url=cleanUrl(d.get('image_url'));if(d.get('photo')?.size)url=await uploadImage(d.get('photo'));
+      const payload={product_id:d.get('product_id'),name:String(d.get('name')).trim(),color:String(d.get('color')||'').trim(),size:String(d.get('size')||'').trim(),sku:String(d.get('sku')||'').trim()||null,price:Number(d.get('price')),stock:Number(d.get('stock')),image_url:url||null,is_active:d.get('is_active')==='true'};
+      const {error}=editing?await sb.from('product_variants').update(payload).eq('id',id):await sb.from('product_variants').insert(payload);
+      if(error)throw error;closeModal();notify('Wariant zapisany.');await loadCatalog();
+    }catch(err){fail(err)}finally{setLoading(b,false)}
+  });
+}
+async function deleteRecord(table,id,label){
+  ensureAdmin();if(!confirm(`Czy na pewno usunąć ${label}? Ta operacja jest nieodwracalna.`))return;
+  const {error}=await sb.from(table).delete().eq('id',id);
+  if(error)fail(error);else{notify('Usunięto.');await loadCatalog()}
+}
+async function adminAction(action,id){
+  try{ensureAdmin();
+    if(action==='category-add')categoryForm();
+    if(action==='category-edit')categoryForm(id);
+    if(action==='category-delete')await deleteRecord('categories',id,'kategorię (tylko gdy nie ma podkategorii ani produktów)');
+    if(action==='product-add')productForm();
+    if(action==='product-edit')productForm(id);
+    if(action==='product-variants'){adminTab='variants';renderAdmin();variantForm(null,id)}
+    if(action==='product-delete')await deleteRecord('products',id,'produkt i jego warianty');
+    if(action==='variant-add')variantForm();
+    if(action==='variant-edit')variantForm(id);
+    if(action==='variant-delete')await deleteRecord('product_variants',id,'wariant');
+  }catch(error){fail(error)}
+}
+function wire(){
+  $('year').textContent=new Date().getFullYear();$('goShop').onclick=()=>showPage('shop');$('goOrders').onclick=()=>showPage('orders');$('goAdmin').onclick=()=>showPage('admin');
+  $('mobileShop').onclick=()=>showPage('shop');$('mobileOrders').onclick=()=>showPage('orders');$('mobileAdmin').onclick=()=>showPage('admin');
+  $('mobileNavButton').onclick=()=>{let open=$('mobileMenu').classList.toggle('hidden');$('mobileNavButton').setAttribute('aria-expanded',String(!open))};
+  $('authButton').onclick=showAccountMenu;$('cartButton').onclick=openCart;
+  $('categoryBar').onclick=e=>{let btn=e.target.closest('[data-cat]');if(!btn)return;categoryFilter=btn.dataset.cat;subcategoryFilter='all';renderCatalog()};
+  $('subcategoryBar').onclick=e=>{let btn=e.target.closest('[data-subcat]');if(!btn)return;subcategoryFilter=btn.dataset.subcat;renderCatalog()};
+  $('searchProducts').oninput=renderCatalog;$('sortProducts').onchange=renderCatalog;
+  $('productGrid').onclick=e=>{let button=e.target.closest('[data-view-product]');if(button)productModal(button.dataset.viewProduct)};
+  $('adminTabs').onclick=e=>{let b=e.target.closest('[data-tab]');if(b){adminTab=b.dataset.tab;renderAdmin()}};
+  $('adminContent').onclick=e=>{let b=e.target.closest('[data-admin-action]');if(b)adminAction(b.dataset.adminAction,b.dataset.id)};
+  $('adminContent').onchange=async e=>{let input=e.target.closest('[data-order-status]');if(!input)return;const {error}=await sb.from('orders').update({status:input.value}).eq('id',input.dataset.orderStatus);if(error)fail(error);else notify('Status zamówienia zmieniony.')};
+  $('cartItems').onclick=e=>{let plus=e.target.closest('[data-cart-qty]'),del=e.target.closest('[data-cart-remove]');if(plus){let item=cart.find(x=>x.variantId===plus.dataset.cartQty);if(!item)return;const v=variants.find(v=>v.id===item.variantId);let next=item.qty+Number(plus.dataset.change);if(next>(v?.stock||0)){notify('Za mało sztuk w magazynie.');return}if(next<=0)cart=cart.filter(i=>i!==item);else item.qty=next;saveCart();renderCart()}if(del){cart=cart.filter(i=>i.variantId!==del.dataset.cartRemove);saveCart();renderCart()}};
+  $('screenOverlay').onclick=closeModal;$('modalClose').onclick=closeModal;document.querySelector('.drawer .close-btn').onclick=closeModal;
+  $('modalBody').onclick=e=>{if(e.target.closest('[data-modal-cancel]'))closeModal()};
+  document.onkeydown=e=>{if(e.key==='Escape')closeModal()};updateCartCount();
+}
+async function boot(){
+  wire();
+  if(!configured){renderCatalog();return}
+  try{
+    const {createClient}=await import('https://esm.sh/@supabase/supabase-js@2.58.0');
+    sb=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+    sb.auth.onAuthStateChange(()=>setTimeout(()=>refreshAuth().catch(fail),0));
+    await refreshAuth();
+  }catch(error){fail(error);$('productGrid').innerHTML='<div class="config-warning">Nie udało się połączyć z Supabase. Sprawdź konfigurację i dostęp do Internetu.</div>'}
+}
+boot();
