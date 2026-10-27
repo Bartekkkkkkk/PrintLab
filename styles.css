@@ -5,3 +5,16 @@
 .footer .footer-centered>div{text-align:center;font-weight:400}
 .footer .footer-centered span,.footer .footer-centered small{font-weight:400}
 @media(max-width:770px){.footer .footer-centered{align-items:center}.footer .footer-centered>div{text-align:center}}
+
+/* Trzy losowo wybrane produkty z katalogu — zamiast grafiki breloka. */
+.hero-featured{min-width:0;min-height:315px;border-radius:15px;background:#f6f6f7;border:1px solid #f0f0f1;overflow:hidden;display:flex;align-items:stretch}
+.featured-grid{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:11px;align-items:stretch}
+.featured-tile{display:flex;min-width:0;flex-direction:column;align-items:stretch;justify-content:space-between;background:white;border:1px solid #e8e8ea;border-radius:10px;overflow:hidden;padding:0;text-align:left;transition:transform .2s,border-color .2s;cursor:pointer}
+.featured-tile:hover{transform:translateY(-3px);border-color:#cf1727}
+.featured-tile img{width:100%;height:245px;min-height:0;object-fit:contain;padding:9px;display:block}
+.featured-name{padding:10px 9px 12px;font-size:11px;font-weight:600;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+.featured-empty,.featured-loading{margin:auto;padding:26px;text-align:center;color:#777981;font-size:12px;line-height:1.8}
+@media(max-width:1050px){.featured-tile img{height:190px}}
+@media(max-width:770px){.hero-featured{min-height:0}.featured-grid{gap:7px;padding:8px}.featured-tile img{height:165px}.featured-name{font-size:10px;padding:8px}}
+@media(max-width:430px){.featured-tile img{height:105px;padding:4px}.featured-name{font-size:9px;padding:6px}}
+@media(prefers-reduced-motion:reduce){.featured-tile{transition:none}}

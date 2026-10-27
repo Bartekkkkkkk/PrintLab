@@ -12,6 +12,34 @@ let sb = null, user = null, profile = null, isAdmin = false;
 let categories = [], products = [], variants = [], orders = [], customers = [];
 let currentPage = 'shop', adminTab = 'categories', categoryFilter = 'all', subcategoryFilter = 'all';
 let cart = safeCart();
+// Losowanie następuje przy wejściu na stronę, a nie przy każdym filtrowaniu.
+let featuredIds = [];
+let featuredSignature = null;
+function pickHeroProducts(){
+  const available = products.filter(p=>p.is_active && cleanUrl(p.image_url));
+  // Produkt bez zdjęcia nie zajmuje miejsca w sekcji promowanej.
+  const signature = available.map(p=>p.id).sort().join('|');
+  if(signature !== featuredSignature){
+    featuredSignature = signature;
+    const pool = available.slice();
+    // Fisher-Yates z losowością przeglądarki; każde otwarcie to inna próba losowania.
+    for(let i=pool.length-1;i>0;i--){
+      const random = new Uint32Array(1);crypto.getRandomValues(random);
+      const j=random[0]%(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];
+    }
+    featuredIds=pool.slice(0,3).map(p=>p.id);
+  }
+}
+function renderHeroProducts(){
+  const hero=$('heroFeatured');if(!hero)return;
+  const items=featuredIds.map(id=>products.find(p=>p.id===id)).filter(Boolean);
+  if(!items.length){
+    hero.innerHTML='<div class="featured-empty">Tutaj pojawią się produkty ze zdjęciami dodane w panelu administratora.</div>';
+    return;
+  }
+  hero.innerHTML=`<div class="featured-grid">${items.map((p,i)=>`<button type="button" class="featured-tile" data-featured-product="${escapeHTML(p.id)}" aria-label="Zobacz produkt: ${escapeHTML(p.name)}"><img src="${escapeHTML(cleanUrl(p.image_url))}" alt="${escapeHTML(p.name)}" ${i?'loading="lazy"':'fetchpriority="high"'}><span class="featured-name">${escapeHTML(p.name)}</span></button>`).join('')}</div>`;
+}
+
 function safeCart(){try{return JSON.parse(localStorage.getItem('printlab-cart-v2')||'[]').filter(i=>i.id&&i.variantId&&i.qty>0)}catch{return []}}
 function saveCart(){localStorage.setItem('printlab-cart-v2',JSON.stringify(cart));updateCartCount()}
 function notify(msg){$('toast').textContent=msg;$('toast').classList.add('visible');clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('toast').classList.remove('visible'),3500)}
@@ -43,7 +71,7 @@ function updateAuthUI(){
   $('authButton').textContent=user?'Wyloguj':'Zaloguj się';
 }
 async function loadCatalog(){
-  if(!sb){renderCatalog();return}
+  if(!sb){renderHeroProducts();renderCatalog();return}
   const [c,p,v]=await Promise.all([
     sb.from('categories').select('*').order('position').order('name'),
     sb.from('products').select('*').order('created_at',{ascending:false}),
@@ -51,7 +79,7 @@ async function loadCatalog(){
   ]);
   for(const r of [c,p,v])if(r.error)throw r.error;
   categories=c.data||[];products=p.data||[];variants=v.data||[];
-  renderCatalog();if(currentPage==='admin')renderAdmin();
+  pickHeroProducts();renderHeroProducts();renderCatalog();if(currentPage==='admin')renderAdmin();
 }
 function categoriesDescendant(id){return categories.filter(c=>c.parent_id===id).map(c=>c.id)}
 function renderCatalog(){
@@ -339,6 +367,7 @@ function wire(){
   $('categoryBar').onclick=e=>{let btn=e.target.closest('[data-cat]');if(!btn)return;categoryFilter=btn.dataset.cat;subcategoryFilter='all';renderCatalog()};
   $('subcategoryBar').onclick=e=>{let btn=e.target.closest('[data-subcat]');if(!btn)return;subcategoryFilter=btn.dataset.subcat;renderCatalog()};
   $('searchProducts').oninput=renderCatalog;$('sortProducts').onchange=renderCatalog;
+  $('heroFeatured').onclick=e=>{const b=e.target.closest('[data-featured-product]');if(b)productModal(b.dataset.featuredProduct)};
   $('productGrid').onclick=e=>{let button=e.target.closest('[data-view-product]');if(button)productModal(button.dataset.viewProduct)};
   $('adminTabs').onclick=e=>{let b=e.target.closest('[data-tab]');if(b){adminTab=b.dataset.tab;renderAdmin()}};
   $('adminContent').onclick=e=>{let b=e.target.closest('[data-admin-action]');if(b)adminAction(b.dataset.adminAction,b.dataset.id)};
@@ -350,7 +379,7 @@ function wire(){
 }
 async function boot(){
   wire();
-  if(!configured){renderCatalog();return}
+  if(!configured){renderHeroProducts();renderCatalog();return}
   try{
     const {createClient}=await import('https://esm.sh/@supabase/supabase-js@2.58.0');
     sb=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});

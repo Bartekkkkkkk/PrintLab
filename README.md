@@ -80,3 +80,7 @@ Usunięto osobną stronę „Ustawienia konta” i formularz edycji profilu. Prz
 5. Zachowaj dokładnie `{{ .ConfirmationURL }}` w szablonach; to link Supabase weryfikujący token.
 6. Przetestuj rejestrację nowego konta i reset hasła z produkcyjnego adresu HTTPS.
 7. Jeśli zobaczysz link localhost po tych zmianach, sprawdź Site URL, listę Redirect URLs oraz czy użytkownik nie kliknął starego maila.
+
+
+## Nowość: 3 losowe produkty na stronie głównej
+Zamiast statycznej grafiki pojawiają się maksymalnie 3 losowe aktywne produkty ze zdjęciem z Supabase. Wybór wykonuje się ponownie przy każdym odświeżeniu strony. Kliknięcie otwiera szczegóły produktu. Jeśli mniej niż 3 produkty mają zdjęcia, wyświetlana jest dostępna liczba. Jeśli brak zdjęć, pojawia się neutralny komunikat (bez fikcyjnych produktów). Nie wymaga zmian schematu bazy.
