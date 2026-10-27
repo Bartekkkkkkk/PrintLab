@@ -219,22 +219,14 @@ async function openCheckout(){
  if(!sb||!user){notify('Zaloguj się, aby złożyć zamówienie.');showAuth();return}
  if(!cart.length){notify('Koszyk jest pusty.');return}
  closeModal();
- modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Wybierz Paczkomat InPost i podaj dane odbiorcy. Cenę produktów weryfikuje serwer.</p>
+ modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Wpisz kod Paczkomatu InPost i dane odbiorcy. Przesyłkę nadamy ręcznie po opłaceniu zamówienia. Cenę produktów weryfikuje serwer.</p>
   <form id="inpostCheckoutForm" class="form-grid">
     <div class="field span2"><label>Imię i nazwisko odbiorcy *</label><input name="recipient" maxlength="120" required autocomplete="name" placeholder="Jan Kowalski"></div>
     <div class="field span2"><label>Telefon do odbioru paczki *</label><input name="phone" type="tel" required placeholder="500 600 700" autocomplete="tel"></div>
-    <div class="field span2"><label>Wybierz Paczkomat InPost *</label><input name="point" id="chosenPoint" required readonly placeholder="Wybierz punkt na mapie"></div>
-    <div class="field span2" id="inpostMapContainer"></div>
+    <div class="field span2"><label>Kod Paczkomatu InPost *</label><input name="point" id="chosenPoint" required maxlength="32" pattern="[A-Za-z0-9-]{3,32}" placeholder="Np. WAW01M" autocapitalize="characters"><small>Znajdź Paczkomat na <a href="https://inpost.pl/znajdz-paczkomat" target="_blank" rel="noopener noreferrer">mapie InPost</a> i wpisz jego kod. Nie podawaj adresu domowego.</small></div>
     <div class="field span2"><p class="subtle" id="checkoutNote">Koszt dostawy i ostateczna kwota zostaną wyświetlone również na stronie płatności.</p></div>
     <div class="field span2"><button class="primary-btn full" type="submit">Przejdź do bezpiecznej płatności →</button></div>
   </form>`);
- const {INPOST_GEOWIDGET_TOKEN}=await import('./checkout-config.js');
- if(INPOST_GEOWIDGET_TOKEN && !INPOST_GEOWIDGET_TOKEN.includes('WPISZ')){
-  const widget=document.createElement('inpost-geowidget');widget.setAttribute('token',INPOST_GEOWIDGET_TOKEN);widget.setAttribute('language','pl');widget.setAttribute('config','parcelCollect');widget.setAttribute('onpoint','onpointselect');
-  widget.style.cssText='display:block;width:100%;height:410px;';$('inpostMapContainer').appendChild(widget);
- }else $('inpostMapContainer').innerHTML='<p class="subtle">Brak tokenu Geowidget. Skonfiguruj checkout-config.js.</p>';
- const onPoint=e=>{if(!$('chosenPoint'))return;const point=e.detail||{};$('chosenPoint').value=point.name||'';};
- document.addEventListener('onpointselect',onPoint,{signal:checkoutController.signal});
  $('inpostCheckoutForm').onsubmit=async e=>{
    e.preventDefault();const form=e.currentTarget,button=form.querySelector('[type=submit]');if(!form.reportValidity())return;
    button.disabled=true;button.textContent='Przekierowywanie…';
@@ -248,7 +240,7 @@ async function openCheckout(){
    }catch(err){fail(err);button.disabled=false;button.textContent='Przejdź do bezpiecznej płatności →';}
  };
 }
-const checkoutController=new AbortController();
+
 async function loadOrders(){
   if(!sb||!user){$('ordersContent').innerHTML='<p>Zaloguj się, aby zobaczyć zamówienia.</p>';return}
   const {data,error}=await sb.from('checkout_orders').select('id,status,payment_status,total,created_at,inpost_tracking').eq('user_id',user.id).order('created_at',{ascending:false});
@@ -277,10 +269,10 @@ function renderAdmin(){
       `<p class="subtle">Wariant posiada własny kolor, rozmiar, SKU, cenę, stan magazynowy i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
       `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Wariant</th><th>SKU</th><th>Cena</th><th>Stan</th><th>Akcje</th></tr></thead><tbody>${variants.map(v=>`<tr><td>${escapeHTML(productName(v.product_id))}</td><td><strong>${escapeHTML(v.name)}</strong><br><small>${escapeHTML([v.color,v.size].filter(Boolean).join(' / '))}</small></td><td>${escapeHTML(v.sku||'—')}</td><td>${cash(v.price)}</td><td>${v.stock} szt.</td><td class="actions"><button data-admin-action="variant-edit" data-id="${v.id}">Edytuj</button><button data-admin-action="variant-delete" data-id="${v.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='orders'){
-    target.innerHTML=headRow('Zamówienia')+'<p class="subtle">Zamówienia tworzone przez bezpieczny checkout pojawią się tutaj po podłączeniu płatności.</p><div id="adminOrderTable">Wczytywanie…</div>';
-    sb.from('orders').select('id,user_id,status,payment_status,total,created_at,inpost_tracking').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
+    target.innerHTML=headRow('Zamówienia — Stripe / ręczne InPost')+'<p class="subtle">Po potwierdzeniu płatności przez Stripe nadaj przesyłkę ręcznie. Wprowadź numer śledzenia i wybierz status. Nie zmieniaj statusu wysyłki przed opłaceniem.</p><div id="adminOrderTable">Wczytywanie…</div>';
+    sb.from('checkout_orders').select('id,email,recipient,phone,inpost_point,items,total,shipping_cost,status,payment_status,inpost_tracking,created_at').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
       if(error){$('adminOrderTable').textContent=niceError(error);return}
-      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Klient</th><th>Wartość</th><th>Status</th><th>Data</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${escapeHTML(o.user_id.slice(0,8))}</td><td>${cash(o.total)}</td><td><select data-order-status="${o.id}">${['new','pending_payment','paid','in_production','shipped','delivered','cancelled','refunded'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select></td><td>${shortDate(o.created_at)}</td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
+      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Paczkomat</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(o.payment_status)}</span></td><td>${escapeHTML(o.inpost_point)}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak zamówień.</p>';
     });
   }else if(adminTab==='customers'){
     target.innerHTML=headRow('Klienci')+'<p class="subtle">Lista profili użytkowników zarejestrowanych przez Supabase Auth.</p><div id="adminCustomerTable">Wczytywanie…</div>';
@@ -405,8 +397,16 @@ function wire(){
   $('heroFeatured').onclick=e=>{const b=e.target.closest('[data-featured-product]');if(b)productModal(b.dataset.featuredProduct)};
   $('productGrid').onclick=e=>{let button=e.target.closest('[data-view-product]');if(button)productModal(button.dataset.viewProduct)};
   $('adminTabs').onclick=e=>{let b=e.target.closest('[data-tab]');if(b){adminTab=b.dataset.tab;renderAdmin()}};
-  $('adminContent').onclick=e=>{let b=e.target.closest('[data-admin-action]');if(b)adminAction(b.dataset.adminAction,b.dataset.id)};
-  $('adminContent').onchange=async e=>{let input=e.target.closest('[data-order-status]');if(!input)return;const {error}=await sb.from('orders').update({status:input.value}).eq('id',input.dataset.orderStatus);if(error)fail(error);else notify('Status zamówienia zmieniony.')};
+  
+  $('adminContent').onclick=async e=>{
+   let b=e.target.closest('[data-save-shipping]');
+   if(b){if(!isAdmin)return;const id=b.dataset.saveShipping;const status=$('adminContent').querySelector(`[data-shipping-status="${id}"]`)?.value;const tracking=$('adminContent').querySelector(`[data-tracking="${id}"]`)?.value.trim()||null;
+     if(status==='shipped'&&!tracking){notify('Przed oznaczeniem jako wysłane wpisz numer śledzenia.');return}
+     b.disabled=true;const {error}=await sb.from('checkout_orders').update({status,inpost_tracking:tracking}).eq('id',id).eq('payment_status','paid');b.disabled=false;
+     if(error)fail(error);else{notify('Zapisano informacje o nadaniu.');renderAdmin()}return;
+   }
+   let action=e.target.closest('[data-admin-action]');if(action)adminAction(action.dataset.adminAction,action.dataset.id);
+ };
   $('cartItems').onclick=e=>{let plus=e.target.closest('[data-cart-qty]'),del=e.target.closest('[data-cart-remove]');if(plus){let item=cart.find(x=>x.variantId===plus.dataset.cartQty);if(!item)return;const v=variants.find(v=>v.id===item.variantId);let next=item.qty+Number(plus.dataset.change);if(next>(v?.stock||0)){notify('Za mało sztuk w magazynie.');return}if(next<=0)cart=cart.filter(i=>i!==item);else item.qty=next;saveCart();renderCart()}if(del){cart=cart.filter(i=>i.variantId!==del.dataset.cartRemove);saveCart();renderCart()}};
   $('screenOverlay').onclick=closeModal;$('modalClose').onclick=closeModal;document.querySelector('.drawer .close-btn').onclick=closeModal;
   $('modalBody').onclick=e=>{if(e.target.closest('[data-modal-cancel]'))closeModal()};
