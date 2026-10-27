@@ -214,9 +214,44 @@ function renderCart(){
   $('cartItems').innerHTML=cart.length?cart.map(i=>{const v=variants.find(x=>x.id===i.variantId);return `<div class="cart-line"><div><strong>${escapeHTML(productName(i.id))}</strong><small>${escapeHTML(v.name)} · ${cash(v.price)} / szt.</small><div class="qty-box"><button data-cart-qty="${v.id}" data-change="-1">−</button><span>${i.qty}</span><button data-cart-qty="${v.id}" data-change="1">+</button><button class="remove" data-cart-remove="${v.id}">Usuń</button></div></div><strong>${cash(Number(v.price)*i.qty)}</strong></div>`}).join(''):'<div class="empty-state"><h3>Koszyk jest pusty</h3><p>Dodaj produkt z katalogu.</p></div>';
   $('cartTotal').textContent=cash(cart.reduce((s,i)=>s+Number(variants.find(v=>v.id===i.variantId)?.price||0)*i.qty,0));
 }
+// Płatność uruchamiana wyłącznie przez serwer Vercel.
+async function openCheckout(){
+ if(!sb||!user){notify('Zaloguj się, aby złożyć zamówienie.');showAuth();return}
+ if(!cart.length){notify('Koszyk jest pusty.');return}
+ closeModal();
+ modal(`<h2 id="modalTitle">Dostawa i płatność</h2><p class="subtle">Wybierz Paczkomat InPost i podaj dane odbiorcy. Cenę produktów weryfikuje serwer.</p>
+  <form id="inpostCheckoutForm" class="form-grid">
+    <div class="field span2"><label>Imię i nazwisko odbiorcy *</label><input name="recipient" maxlength="120" required autocomplete="name" placeholder="Jan Kowalski"></div>
+    <div class="field span2"><label>Telefon do odbioru paczki *</label><input name="phone" type="tel" required placeholder="500 600 700" autocomplete="tel"></div>
+    <div class="field span2"><label>Wybierz Paczkomat InPost *</label><input name="point" id="chosenPoint" required readonly placeholder="Wybierz punkt na mapie"></div>
+    <div class="field span2" id="inpostMapContainer"></div>
+    <div class="field span2"><p class="subtle" id="checkoutNote">Koszt dostawy i ostateczna kwota zostaną wyświetlone również na stronie płatności.</p></div>
+    <div class="field span2"><button class="primary-btn full" type="submit">Przejdź do bezpiecznej płatności →</button></div>
+  </form>`);
+ const {INPOST_GEOWIDGET_TOKEN}=await import('./checkout-config.js');
+ if(INPOST_GEOWIDGET_TOKEN && !INPOST_GEOWIDGET_TOKEN.includes('WPISZ')){
+  const widget=document.createElement('inpost-geowidget');widget.setAttribute('token',INPOST_GEOWIDGET_TOKEN);widget.setAttribute('language','pl');widget.setAttribute('config','parcelCollect');widget.setAttribute('onpoint','onpointselect');
+  widget.style.cssText='display:block;width:100%;height:410px;';$('inpostMapContainer').appendChild(widget);
+ }else $('inpostMapContainer').innerHTML='<p class="subtle">Brak tokenu Geowidget. Skonfiguruj checkout-config.js.</p>';
+ const onPoint=e=>{if(!$('chosenPoint'))return;const point=e.detail||{};$('chosenPoint').value=point.name||'';};
+ document.addEventListener('onpointselect',onPoint,{signal:checkoutController.signal});
+ $('inpostCheckoutForm').onsubmit=async e=>{
+   e.preventDefault();const form=e.currentTarget,button=form.querySelector('[type=submit]');if(!form.reportValidity())return;
+   button.disabled=true;button.textContent='Przekierowywanie…';
+   try{
+    const {data:{session}}=await sb.auth.getSession();if(!session?.access_token)throw Error('Zaloguj się ponownie.');
+    const body={items:cart.map(i=>({variantId:i.variantId,qty:i.qty})),point:form.elements.namedItem('point').value,recipient:form.elements.namedItem('recipient').value,phone:form.elements.namedItem('phone').value};
+    const response=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify(body)});
+    const result=await response.json();if(!response.ok)throw Error(result.error||'Błąd płatności');
+    if(!result.url||!result.url.startsWith('https://checkout.stripe.com/'))throw Error('Nieprawidłowy adres płatności.');
+    location.assign(result.url);
+   }catch(err){fail(err);button.disabled=false;button.textContent='Przejdź do bezpiecznej płatności →';}
+ };
+}
+const checkoutController=new AbortController();
 async function loadOrders(){
   if(!sb||!user){$('ordersContent').innerHTML='<p>Zaloguj się, aby zobaczyć zamówienia.</p>';return}
-  const {data,error}=await sb.from('orders').select('id,status,payment_status,total,created_at,inpost_tracking').eq('user_id',user.id).order('created_at',{ascending:false});
+  const {data,error}=await sb.from('checkout_orders').select('id,status,payment_status,total,created_at,inpost_tracking').eq('user_id',user.id).order('created_at',{ascending:false});
   if(error){fail(error);return}
   $('ordersContent').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Data</th><th>Status</th><th>Płatność</th><th>Kwota</th><th>InPost</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${shortDate(o.created_at)}</td><td>${escapeHTML(o.status)}</td><td>${escapeHTML(o.payment_status)}</td><td>${cash(o.total)}</td><td>${escapeHTML(o.inpost_tracking||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state" style="margin:0"><h3>Brak zamówień</h3><p>Twoje przyszłe zamówienia pojawią się tutaj po uruchomieniu płatności.</p></div>';
 }
@@ -360,10 +395,10 @@ async function adminAction(action,id){
   }catch(error){fail(error)}
 }
 function wire(){
-  $('year').textContent=new Date().getFullYear();$('goShop').onclick=()=>showPage('shop');$('goOrders').onclick=()=>showPage('orders');$('goAdmin').onclick=()=>showPage('admin');
+  $('year').textContent=new Date().getFullYear();const p=new URLSearchParams(location.search).get('payment');if(p==='success')notify('Dziękujemy! Status płatności pojawi się w Moich zamówieniach po potwierdzeniu przez operatora.');if(p==='cancelled')notify('Płatność anulowana. Koszyk został zachowany.');$('goShop').onclick=()=>showPage('shop');$('goOrders').onclick=()=>showPage('orders');$('goAdmin').onclick=()=>showPage('admin');
   $('mobileShop').onclick=()=>showPage('shop');$('mobileOrders').onclick=()=>showPage('orders');$('mobileAdmin').onclick=()=>showPage('admin');
   $('mobileNavButton').onclick=()=>{let open=$('mobileMenu').classList.toggle('hidden');$('mobileNavButton').setAttribute('aria-expanded',String(!open))};
-  $('authButton').onclick=showAccountMenu;$('cartButton').onclick=openCart;
+  $('authButton').onclick=showAccountMenu;$('cartButton').onclick=openCart;$('checkoutButton').onclick=openCheckout;
   $('categoryBar').onclick=e=>{let btn=e.target.closest('[data-cat]');if(!btn)return;categoryFilter=btn.dataset.cat;subcategoryFilter='all';renderCatalog()};
   $('subcategoryBar').onclick=e=>{let btn=e.target.closest('[data-subcat]');if(!btn)return;subcategoryFilter=btn.dataset.subcat;renderCatalog()};
   $('searchProducts').oninput=renderCatalog;$('sortProducts').onchange=renderCatalog;

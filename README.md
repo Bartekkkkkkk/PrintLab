@@ -1,86 +1,34 @@
-# PrintLab — sklep + panel administratora + Supabase (wersja 2)
+# PrintLab — InPost + płatności online (Stripe)
 
-Statyczny frontend przeznaczony do hostowania na GitHub + Vercel, z danymi przechowywanymi w Supabase. **Bez Node.js, npm, procesu kompilacji ani frameworka.**
+## Co dostajesz
+- Koszyk → dane odbiorcy → InPost Geowidget do wyboru Paczkomatu → płatność Stripe Checkout.
+- Zapis zamówienia po stronie serwera Vercel na podstawie cen odczytanych z Supabase.
+- Webhook Stripe z weryfikacją podpisu potwierdza zapłatę (nie sam powrót użytkownika).
+- Zakładka „Moje zamówienia” czyta bezpieczną tabelę `checkout_orders`.
+- RLS: klient widzi tylko swoje zamówienia, admin wszystkie.
 
-## Co jest zaimplementowane
+## Konfiguracja krok po kroku
+1. Supabase → SQL Editor: uruchom **tylko** `supabase/checkout_migration.sql` (nie stary schema.sql).
+2. Vercel → Project → Settings → Environment Variables, dodaj (Production, Preview wg potrzeb):
+   - `SUPABASE_URL` — Project URL Supabase.
+   - `SUPABASE_SERVICE_ROLE_KEY` — tajny service_role/secret *tylko w Vercel*, nie w repozytorium.
+   - `STRIPE_SECRET_KEY` — `sk_test_...` na testy, potem `sk_live_...`.
+   - `STRIPE_WEBHOOK_SECRET` — `whsec_...` dla endpointu webhook na właściwej domenie.
+   - `PUBLIC_SITE_URL` — np. `https://twojsklep.vercel.app`.
+   - `INPOST_SHIPPING_GROSZE` — koszt przesyłki w groszach (np. `1499` = 14,99 zł), zgodny z ofertą.
+3. Stripe Dashboard → Developers → Webhooks → Dodaj endpoint `https://TWOJA-DOMENA/api/stripe-webhook`.
+   Zaznacz `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`.
+   Skopiuj **Signing secret** webhooka do `STRIPE_WEBHOOK_SECRET` w Vercel.
+4. Stripe Dashboard → Payment methods: aktywuj **card, BLIK, Przelewy24** o ile konto/operator umożliwia je dla PLN. Integracja żąda `card`, `blik`, `p24`; gdy konto ich nie obsługuje, sesja zwróci błąd — skontaktuj się z operatorem.
+5. InPost: załóż/otwórz konto Manager Paczek, pozyskaj **token Geowidget** przypisany do domeny. W `checkout-config.js` wpisz go zamiast `WPISZ_TOKEN_GEOWIDGET` (token widgetu jest publiczny).
+6. Wgraj pliki do repozytorium GitHub i wdroż na Vercel. Zostaw Framework Preset Other. Vercel automatycznie instaluje zależności z `package.json` i udostępnia `/api/*`.
+7. W Stripe ustaw najpierw klucze testowe i wykonaj zakup testowy, potem sprawdź `checkout_orders` w Supabase i `Moje zamówienia`.
+8. Dopiero po przetestowaniu webhooków, refundacji i sprawdzeniu dostępności produktu przełącz Stripe na live.
 
-- Responsywny katalog produktów (duże monitory, laptopy, tablet, telefon), bez górnego szarego paska.
-- Kategorie główne i podkategorie (na razie 1 poziom) tworzone i edytowane przez administratora.
-- Produkty: nazwa, opis, kategoria, cena bazowa, zdjęcie, SKU, widoczność.
-- Warianty/podprodukty: nazwa, kolor, rozmiar, cena, osobny SKU, osobne zdjęcie, stan magazynowy i widoczność.
-- Dynamiczny katalog, filtrowanie, wyszukiwarka i sortowanie.
-- Supabase Auth: rejestracja, logowanie, reset hasła, wylogowywanie.
-- Baza PostgreSQL: profile klientów, adresy, kategorie, produkty, warianty, zamówienia i pozycje zamówień.
-- Admin: tworzenie/edycja/usuwanie kategorii, produktów i wariantów, przegląd klientów i zamówień, zmiana statusu zamówień.
-- Supabase Storage: zdjęcia produktów; wgrywanie ograniczone polityką RLS do administratora.
-- RLS: publiczny odczyt opublikowanych produktów, prywatne profile i zamówienia, edycja katalogu tylko przez administratora.
-- Koszyk przeglądarkowy z wyborem wariantu, wyświetlaniem dostępności i cen.
-
-**Płatności i InPost nie są jeszcze zintegrowane.** Przycisk finalizacji zamówienia jest celowo wyłączony. W bazie jest bezpieczna struktura do zamówień, ale nie istnieje jeszcze mechanizm checkoutu ani automatyczne wystawianie etykiet. Nie ma pozorowanych potwierdzeń zapłaty.
-
-## Jednorazowa konfiguracja Supabase (nie da się jej pominąć przy nowej bazie)
-
-1. Utwórz projekt w https://supabase.com/dashboard .
-2. Otwórz **SQL Editor** → **New query**. Skopiuj **cały** `supabase/schema.sql`, uruchom go jeden raz (`Run`). Spowoduje to utworzenie tabel, uprawnień RLS i bucketu zdjęć `product-images`.
-3. Otwórz **Project Settings → API** / **Connect** i skopiuj:
-   - Project URL, np. `https://abcdef.supabase.co`
-   - klucz **publishable** (`sb_publishable_...`) lub legacy `anon` key.
-4. Edytuj **dwie** linie w `config.js`. URL i klucz publishable/anon mogą występować w kodzie frontendowym — chronią je polityki RLS. **Nigdy** nie wpisuj `service_role` ani `sb_secret_...`.
-5. W **Authentication → Providers → Email** włącz Email Auth; ustal, czy wymagane będzie potwierdzenie e-mail.
-6. W **Authentication → URL Configuration** dodaj domenę produkcyjną Vercel do dozwolonych redirect URLs (np. `https://twojsklep.vercel.app/**`) i ustaw odpowiedni Site URL. Jest to potrzebne do linków logowania/resetu hasła.
-7. Opublikuj stronę i **zarejestruj swoje konto**. Jeśli wymagane, potwierdź e-mail.
-8. Uruchom w SQL Editor skrypt `supabase/seed-admin.sql` **po zastąpieniu `WPISZ_EMAIL_ADMINA` swoim e-mailem**. Upewnij się, że zwraca jeden wiersz.
-9. Wyloguj się i zaloguj ponownie (lub odśwież stronę). Pojawi się zakładka **Panel administratora**.
-10. Utwórz kategorię → opcjonalną podkategorię → produkt → jego warianty. Produkty staną się widoczne w sklepie.
-
-## GitHub + Vercel
-
-1. Rozpakuj ZIP, wgraj **zawartość** folderu (nie jego katalog nadrzędny) do **głównego katalogu** repozytorium.
-2. Vercel → Add New → Project → Import Git Repository.
-3. Framework Preset: **Other**. Build Command: **pusty / skip build**, Output Directory: `.` (katalog projektu). Root Directory: `./`.
-4. Deploy. Nie potrzebujesz `npm install` ani `package.json`. W tej paczce nie ma `vercel.json` ani komend budowania, aby uniknąć konfliktów konfiguracji.
-5. Kolejny push do `main` automatycznie aktualizuje witrynę.
-
-Jeśli stary projekt Vercel wciąż zgłasza **`Cannot read properties of undefined (reading 'fsPath')`**, jest to problem etapu budowania projektu, nie samego HTML. Zalecane jest zaimportowanie tego repozytorium do **nowego projektu Vercel** z presetem Other i bez kroku kompilacji — tego błędu nie da się zagwarantowanie naprawić kodem strony, jeśli pochodzi z konfiguracji usługi.
-
-## Bezpieczeństwo i kolejne kroki
-
-- Konta i hasła obsługuje Supabase Auth — hasła nigdy nie trafiają do naszych własnych tabel ani `localStorage`.
-- W Supabase **anon/publishable key jest publiczny**. Dostęp do danych ogranicza RLS. Po wykonaniu SQL warto przetestować uprawnienia kontem klienta i admina.
-- Nie dodawaj bezpośrednio insertów do `orders` z przeglądarki ani nie pozwalaj frontendowi samemu ustalać ceny zamówienia. Checkout wymaga funkcji serwerowej lub Edge Function, która pobiera ceny z bazy, sprawdza dostępność i potwierdza płatność webhookiem operatora.
-- Przy większym sklepie warto dodać historię operacji administracyjnych, kopie zapasowe, ograniczenia uploadów, usuwanie niewykorzystanych zdjęć i testy uprawnień.
-- Uzupełnij prawdziwe dane kontaktowe, regulamin, politykę prywatności, politykę reklamacji i informacje o kosztach i terminach dostawy.
-- W obecnej wersji adresy mają gotową tabelę i RLS; formularz książki adresowej oraz zapisywanie zamówień zostaną podłączone przy implementacji checkoutu.
-
-## Pliki
-
-`index.html` – układ, `styles.css` – RWD i wygląd, `app.js` – logika sklepu/admina, `config.js` – publiczne połączenie Supabase, `assets/logo.png` – Twoje logo, `supabase/schema.sql` – struktura i RLS, `supabase/seed-admin.sql` – pierwsze konto admina.
-
-## Aktualizacja widoczności Moich zamówień
-Przycisk `Moje zamówienia` w menu desktop i mobilnym jest domyślnie ukryty. Pokazuje się tylko zalogowanemu użytkownikowi po sprawdzeniu sesji Supabase. Po wylogowaniu znika, a użytkownik znajdujący się na stronie zamówień zostaje przeniesiony do sklepu.
-
-
-## Zmiana w tej wersji
-Usunięto osobną stronę „Ustawienia konta” i formularz edycji profilu. Przycisk w nagłówku po zalogowaniu ma nazwę „Wyloguj się” i wylogowuje konto. Logowanie, rejestracja, Moje zamówienia (tylko po zalogowaniu) i panel administratora pozostają.
-
-
-## Ulepszenia logowania i wiadomości (ta aktualizacja)
-- Po zalogowaniu przycisk w nagłówku to **Wyloguj** (wylogowuje jednym kliknięciem). Nie ma strony ani formularza „Ustawienia konta”.
-- `Moje zamówienia` widoczne tylko dla zalogowanych.
-- Rejestracja przekazuje `emailRedirectTo`, a reset hasła `redirectTo` z bieżącego bezpiecznego adresu HTTPS sklepu.
-- Wysłanie maila z localhost jest blokowane i pokazuje wyjaśnienie, aby uniknąć przypadkowych błędnych linków.
-- Po wejściu przez link resetowania hasła sklep pokazuje formularz ustawienia nowego hasła.
-- Dwa gotowe szablony w `supabase/email-templates/`.
-
-### OBOWIĄZKOWE ustawienie linków w Supabase (nie da się zmienić samą paczką HTML)
-1. Sprawdź ostateczny adres sklepu np. `https://printlab-twojanazwa.vercel.app`.
-2. Supabase Dashboard → Authentication → URL Configuration: **Site URL** ustaw dokładnie na adres produkcyjny HTTPS. Usuń domyślne `http://localhost:3000`.
-3. W **Redirect URLs** dodaj `https://printlab-twojanazwa.vercel.app/**` (zamień na prawdziwą domenę). Dodatkowe domeny produkcyjne dodaj osobno.
-4. Authentication → Email Templates → **Confirm signup**: wklej zawartość `supabase/email-templates/potwierdzenie-konta.html`. Dla **Reset password** użyj `reset-hasla.html`. Zapisz oba szablony.
-5. Zachowaj dokładnie `{{ .ConfirmationURL }}` w szablonach; to link Supabase weryfikujący token.
-6. Przetestuj rejestrację nowego konta i reset hasła z produkcyjnego adresu HTTPS.
-7. Jeśli zobaczysz link localhost po tych zmianach, sprawdź Site URL, listę Redirect URLs oraz czy użytkownik nie kliknął starego maila.
-
-
-## Nowość: 3 losowe produkty na stronie głównej
-Zamiast statycznej grafiki pojawiają się maksymalnie 3 losowe aktywne produkty ze zdjęciem z Supabase. Wybór wykonuje się ponownie przy każdym odświeżeniu strony. Kliknięcie otwiera szczegóły produktu. Jeśli mniej niż 3 produkty mają zdjęcia, wyświetlana jest dostępna liczba. Jeśli brak zdjęć, pojawia się neutralny komunikat (bez fikcyjnych produktów). Nie wymaga zmian schematu bazy.
+## Co jest gotowe, a co wymaga osobnej aktywacji
+- Gotowe w kodzie: wybór punktu InPost, kalkulacja kwoty po stronie serwera, hostowana strona płatności, odbiór webhooka i zapis statusu zamówienia.
+- **Nie ma jeszcze automatycznego wystawiania ani zakupu etykiet InPost!** Do tego potrzebny jest ShipX/Shipping API, token organizacji i parametry nadania. Sam Geowidget wybiera punkt odbioru.
+- **Brak rezerwacji stanu magazynowego podczas płatności:** przy równoczesnych zakupach trzeba wdrożyć atomową rezerwację towaru przed uruchomieniem realnej sprzedaży.
+- Koszt dostawy ustala administrator przez env `INPOST_SHIPPING_GROSZE`; nie jest automatycznie pobierany z InPost.
+- Nie udostępniaj `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY` ani `STRIPE_WEBHOOK_SECRET` w publicznych plikach. 
+- Nie aktywuj prawdziwej sprzedaży, dopóki nie wykonasz transakcji testowych i nie sprawdzisz webhooka, stanów magazynowych, obsługi reklamacji, zwrotów i zamówień.
