@@ -58,3 +58,6 @@ Edycja ceny podstawowej automatycznie aktualizuje cenę domyślnego wariantu Sta
 
 ## Naprawa Stripe Checkout (BLIK invalid)
 Usunięto wymuszone `payment_method_types: [card, blik]` w `/api/checkout.js`. Stripe Checkout automatycznie wyświetla metody dostępne dla konta, kwoty, waluty i kraju. Metody włączysz w Stripe Dashboard → Settings → Payment methods. Jeśli BLIK jest niedostępny, trzeba go aktywować na koncie Stripe; sklep nie wymusi go sam. Po podmianie plików na GitHub i nowym wdrożeniu Vercel testuj w trybie testowym.
+
+## Widoczność zamówień po płatności
+W sekcji Moje zamówienia i panelu administratora wyświetlane są wyłącznie rekordy z `checkout_orders.payment_status = paid`. Nieudane, anulowane, porzucone lub oczekujące próby płatności nie są pokazywane. Techniczne rekordy `unpaid` pozostają w bazie, ponieważ powstają przed przekierowaniem do Stripe; umożliwiają powiązanie sesji płatności z zamówieniem. Dopiero zweryfikowany webhook Stripe oznacza zamówienie jako `paid`. Wcześniejszych rekordów nie usuwamy, aby nie zakłócić obsługi ewentualnych spóźnionych webhooków.
