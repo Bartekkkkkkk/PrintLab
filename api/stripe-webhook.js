@@ -31,5 +31,5 @@ export default async function handler(req,res){
    if(id)await db.from('checkout_orders').update({status:'cancelled'}).eq('id',id).eq('payment_status','unpaid');
   }
   return res.status(200).json({received:true});
- }catch(e){console.error('stripe webhook:',e.message);return res.status(400).json({error:'Webhook processing error'});}
+ }catch(e){console.error('stripe webhook:',e.message);return res.status(400).json({error:'Nie udało się przetworzyć powiadomienia o płatności.'});}
 }

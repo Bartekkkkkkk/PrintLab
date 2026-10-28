@@ -43,9 +43,15 @@ export default async function handler(req,res){
   const {data:order,error:insertError}=await db.from('checkout_orders').insert({user_id:user.id,email:contactEmail,recipient:recipient.trim(),phone:phone.replaceAll(' ',''),delivery_address:deliveryAddress,items:snapshot,total,shipping_cost:shippingCents/100,status:'pending_payment',payment_status:'unpaid'}).select('id').single();
   if(insertError)throw insertError;
   try{
-   const session=await stripe.checkout.sessions.create({mode:'payment',customer_email:contactEmail,line_items:[...lineItems,{price_data:{currency:'pln',unit_amount:shippingCents,product_data:{name:'InPost Kurier — dostawa pod adres'}},quantity:1}],client_reference_id:order.id,metadata:{order_id:order.id},success_url:`${site}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${site}/?payment=cancelled`,expires_at:Math.floor(Date.now()/1000)+1800});
+   const session=await stripe.checkout.sessions.create({mode:'payment',locale:'pl',customer_email:contactEmail,line_items:[...lineItems,{price_data:{currency:'pln',unit_amount:shippingCents,product_data:{name:'InPost Kurier — dostawa pod adres'}},quantity:1}],client_reference_id:order.id,metadata:{order_id:order.id},success_url:`${site}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${site}/?payment=cancelled`,expires_at:Math.floor(Date.now()/1000)+1800});
    await db.from('checkout_orders').update({stripe_session_id:session.id}).eq('id',order.id);
    return res.status(200).json({url:session.url});
   }catch(e){await db.from('checkout_orders').update({status:'cancelled'}).eq('id',order.id);throw e;}
- }catch(e){console.error('checkout:',e?.message);return res.status(400).json({error:e?.message||'Nie udało się rozpocząć płatności.'});}
+ }catch(e){
+  console.error('checkout:',e?.message);
+  const message=String(e?.message||'');
+  const messageForCustomer=/^(Nie |Brak |Podaj |Wpisz |Zaloguj |Sesja |Błęd|Nieprawidłow|Przekrocz|Produkt |Numer |Wystąpił |Dostaw)/i.test(message)
+    ?message:'Nie udało się rozpocząć płatności. Spróbuj ponownie.';
+  return res.status(400).json({error:messageForCustomer});
+ }
 }

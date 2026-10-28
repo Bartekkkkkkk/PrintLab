@@ -6,7 +6,48 @@ const cash = value => Number(value || 0).toLocaleString('pl-PL',{style:'currency
 const shortDate = value => new Date(value).toLocaleString('pl-PL',{dateStyle:'medium'});
 const selected = (a,b) => String(a??'')===String(b??'')?'selected':'';
 const checked = v => v?'checked':'';
-const niceError = e => e?.message?.replace('duplicate key value violates unique constraint', 'Ta wartość już istnieje (np. nazwa URL).') || 'Wystąpił błąd.';
+// Tłumaczenie komunikatów dostawców zewnętrznych. Szczegóły techniczne pozostają w konsoli.
+function niceError(error){
+  const raw=String(error?.message||error?.error_description||error?.error||error||'').trim();
+  if(!raw)return 'Wystąpił błąd. Spróbuj ponownie.';
+  const code=String(error?.code||error?.status||'').toLowerCase();
+  const translations=[
+    [/invalid login credentials|invalid credentials|email or password is incorrect|invalid email or password/i,'Nieprawidłowy adres e-mail lub hasło.'],
+    [/email not confirmed|email_not_confirmed/i,'Potwierdź adres e-mail, aby się zalogować.'],
+    [/user already registered|already been registered|email address is already registered|user_already_exists/i,'Użytkownik z tym adresem e-mail już istnieje.'],
+    [/password should be at least|password must be at least|weak password/i,'Hasło jest za krótkie lub zbyt słabe.'],
+    [/password.*different|new password should be different/i,'Nowe hasło musi różnić się od poprzedniego.'],
+    [/signup is disabled|signups? not allowed/i,'Rejestracja jest obecnie wyłączona.'],
+    [/email rate limit exceeded|too many emails|email.*rate limit/i,'Przekroczono limit wiadomości e-mail. Spróbuj ponownie później.'],
+    [/too many requests|rate limit exceeded|for security purposes.*seconds|over_request_rate_limit/i,'Zbyt wiele prób. Spróbuj ponownie za chwilę.'],
+    [/invalid email|email address is invalid/i,'Podaj poprawny adres e-mail.'],
+    [/auth session missing|session.*expired|jwt expired|refresh token.*invalid|invalid refresh token/i,'Sesja wygasła. Zaloguj się ponownie.'],
+    [/duplicate key value violates unique constraint|23505|already exists/i,'Taki wpis już istnieje. Zmień nazwę lub spróbuj ponownie.'],
+    [/violates foreign key constraint|23503|foreign key constraint/i,'Nie można wykonać operacji z powodu powiązanych danych.'],
+    [/violates not-null constraint|23502|null value in column/i,'Uzupełnij wymagane pola formularza.'],
+    [/violates check constraint|23514|check constraint/i,'Podane dane nie spełniają wymagań formularza.'],
+    [/row.level security|permission denied|not authorized|unauthorized|forbidden|42501|insufficient_privilege/i,'Nie masz uprawnień do wykonania tej operacji.'],
+    [/invalid input syntax for type uuid|22p02/i,'Nieprawidłowy identyfikator rekordu.'],
+    [/failed to fetch|network request failed|networkerror|load failed|fetch failed|connection.*lost|ERR_NETWORK/i,'Brak połączenia z serwerem. Sprawdź Internet i spróbuj ponownie.'],
+    [/storage.*limit|payload too large|entity too large|file too large/i,'Plik jest za duży. Wybierz mniejszy plik.'],
+    [/bucket not found|storage bucket not found/i,'Nie znaleziono miejsca przechowywania zdjęć.'],
+    [/invalid.*payment|payment.*failed|payment_intent|checkout.session|stripe/i,'Wystąpił problem z płatnością. Spróbuj ponownie.'],
+    [/unexpected token|invalid json|internal server error|bad gateway|service unavailable|gateway timeout/i,'Serwer jest chwilowo niedostępny. Spróbuj ponownie później.'],
+    [/no rows found|pgrst116|cannot coerce.*single json/i,'Nie znaleziono wskazanego rekordu.'],
+  ];
+  for(const [pattern,message] of translations)if(pattern.test(raw)||pattern.test(code))return message;
+  // Własne komunikaty aplikacji są polskie; angielskich błędów dostawców nie wyświetlamy.
+  if(/^(Nie |Brak |Podaj |Wpisz |Zaloguj |Wyloguj |Wystąpił |Przekrocz|Zbyt |Sesja |Dostęp |Kategoria |Produkt |Wariant |Plik |Błęd|Cena |Płatność |Konto |Wybierz |Zapisano |Nieprawidłow|Przed |Uzupełnij |Ten |Ta |To |Niedozwolon|Odmowa |Proszę |Oczekiwanie |Wyłączon|Możesz |Adres |Przesyłk|Przywróc|Podczas |Nie udało)/i.test(raw))return raw;
+  return 'Nie udało się wykonać operacji. Spróbuj ponownie.';
+}
+const statusLabels={
+  new:'Nowe',pending_payment:'Oczekuje na płatność',pending:'Oczekuje',
+  unpaid:'Nieopłacone',paid:'Opłacone',in_production:'W przygotowaniu',
+  processing:'W realizacji',shipped:'Wysłane',delivered:'Dostarczone',
+  cancelled:'Anulowane',canceled:'Anulowane',refunded:'Zwrócone',
+  failed:'Nieudane',succeeded:'Zakończone',completed:'Zakończone',
+};
+const polishStatus=value=>statusLabels[String(value||'').toLowerCase()]||'Nieznany status';
 const configured = /^https:\/\/[^\s]+\.supabase\.co\/?$/.test(SUPABASE_URL.trim()) && SUPABASE_ANON_KEY.length > 30 && !SUPABASE_ANON_KEY.includes('WPISZ');
 let sb = null, user = null, profile = null, isAdmin = false;
 let categories = [], products = [], variants = [], orders = [], customers = [];
@@ -249,7 +290,7 @@ async function loadOrders(){
   if(!sb||!user){$('ordersContent').innerHTML='<p>Zaloguj się, aby zobaczyć zamówienia.</p>';return}
   const {data,error}=await sb.from('checkout_orders').select('id,status,payment_status,total,created_at,inpost_tracking').eq('user_id',user.id).eq('payment_status','paid').order('created_at',{ascending:false});
   if(error){fail(error);return}
-  $('ordersContent').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Data</th><th>Status</th><th>Płatność</th><th>Kwota</th><th>InPost</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${shortDate(o.created_at)}</td><td>${escapeHTML(o.status)}</td><td>${escapeHTML(o.payment_status)}</td><td>${cash(o.total)}</td><td>${escapeHTML(o.inpost_tracking||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state" style="margin:0"><h3>Brak zamówień</h3><p>Tutaj pojawią się wyłącznie zamówienia z potwierdzoną płatnością.</p></div>';
+  $('ordersContent').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Numer</th><th>Data</th><th>Status</th><th>Płatność</th><th>Kwota</th><th>InPost</th></tr></thead><tbody>${data.map(o=>`<tr><td>${escapeHTML(o.id.slice(0,8))}</td><td>${shortDate(o.created_at)}</td><td>${escapeHTML(polishStatus(o.status))}</td><td>${escapeHTML(polishStatus(o.payment_status))}</td><td>${cash(o.total)}</td><td>${escapeHTML(o.inpost_tracking||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state" style="margin:0"><h3>Brak zamówień</h3><p>Tutaj pojawią się wyłącznie zamówienia z potwierdzoną płatnością.</p></div>';
 }
 // --- Panel administratora: wszystkie zapisy wykonuje Supabase i egzekwuje RLS. ---
 function ensureAdmin(){if(!sb||!isAdmin)throw new Error('Nie masz uprawnień administratora.')}
@@ -264,10 +305,10 @@ function renderAdmin(){
   if(adminTab==='categories'){
     const rows=categories.slice().sort((a,b)=>(a.parent_id?1:0)-(b.parent_id?1:0)||a.position-b.position||a.name.localeCompare(b.name));
     target.innerHTML=headRow('Kategorie i podkategorie','Dodaj kategorię','category-add')+
-      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Nazwa</th><th>Typ</th><th>Status</th><th>Kolejność</th><th>Akcje</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${c.parent_id?'↳ ':''}${escapeHTML(c.name)}</strong></td><td class="muted">${c.parent_id?'Podkategoria · '+escapeHTML(categoryName(c.parent_id)):'Kategoria główna'}</td><td><span class="status ${c.is_active?'':'off'}">${c.is_active?'Aktywna':'Ukryta'}</span></td><td>${c.position}</td><td class="actions"><button data-admin-action="category-edit" data-id="${c.id}">Edytuj</button><button data-admin-action="category-delete" data-id="${c.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Nazwa</th><th>Typ</th><th>Status</th><th>Kolejność</th><th>Akcje</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${c.parent_id?'↳ ':''}${escapeHTML(c.name)}</strong></td><td class="muted">${c.parent_id?'Podkategoria · '+escapeHTML(categoryName(c.parent_id)):'Kategoria główna'}</td><td><span class="status ${c.is_active?'':'off'}">${c.is_active?'Aktywna':'Ukryta'}</span></td><td>${c.position}</td><td class="actions"><button data-admin-action="category-edit" data-id="${c.id}">Edytuj</button><button type="button" data-admin-action="category-delete" data-id="${c.id}" title="Usuń kategorię; produkty pozostaną w sklepie">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='products'){
     target.innerHTML=headRow('Produkty','Dodaj produkt','product-add')+
-      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button data-admin-action="product-delete" data-id="${p.id}">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
+      `<div class="table-scroll"><table class="data-table"><thead><tr><th>Produkt</th><th>Kategoria</th><th>Cena bazowa</th><th>Status</th><th>Akcje</th></tr></thead><tbody>${products.map(p=>`<tr><td><strong>${escapeHTML(p.name)}</strong></td><td>${escapeHTML(categoryName(p.category_id))}</td><td>${cash(p.base_price)}</td><td><span class="status ${p.is_active?'':'off'}">${p.is_active?'Widoczny':'Ukryty'}</span></td><td class="actions"><button data-admin-action="product-edit" data-id="${p.id}">Edytuj</button><button data-admin-action="product-variants" data-id="${p.id}">Warianty</button><button type="button" data-admin-action="product-delete" data-id="${p.id}" title="Usuń produkt natychmiast, bez potwierdzenia" aria-label="Usuń produkt ${escapeHTML(p.name)} natychmiast">Usuń</button></td></tr>`).join('')}</tbody></table></div>`;
   }else if(adminTab==='variants'){
     target.innerHTML=headRow('Warianty',products.length?'Dodaj wariant':'','variant-add')+
       `<p class="subtle">Wariant posiada własny kolor, rozmiar, cenę i opcjonalne zdjęcie. Jeden produkt może mieć dowolną liczbę wariantów.</p>`+
@@ -276,7 +317,7 @@ function renderAdmin(){
     target.innerHTML=headRow('Zamówienia')+'<p class="subtle">Po potwierdzeniu płatności przez Stripe nadaj przesyłkę ręcznie. Wprowadź numer śledzenia i wybierz status. Nie zmieniaj statusu wysyłki przed opłaceniem.</p><div id="adminOrderTable">Wczytywanie…</div>';
     sb.from('checkout_orders').select('id,email,recipient,phone,delivery_address,items,total,shipping_cost,status,payment_status,inpost_tracking,created_at').eq('payment_status','paid').order('created_at',{ascending:false}).limit(100).then(({data,error})=>{
       if(error){$('adminOrderTable').textContent=niceError(error);return}
-      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Adres doręczenia</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(o.payment_status)}</span></td><td>${escapeHTML([o.delivery_address?.street,o.delivery_address?.apartment?('lok. '+o.delivery_address.apartment):'',o.delivery_address?.postal_code,o.delivery_address?.city].filter(Boolean).join(', ')||'Brak adresu')}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option ${selected(status,o.status)}>${status}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak opłaconych zamówień.</p>';
+      $('adminOrderTable').innerHTML=data.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Zamówienie</th><th>Odbiorca</th><th>Produkty</th><th>Kwota</th><th>Płatność</th><th>Adres doręczenia</th><th>Nadanie ręczne</th></tr></thead><tbody>${data.map(o=>`<tr><td><strong>${escapeHTML(o.id.slice(0,8))}</strong><br><small>${shortDate(o.created_at)}</small></td><td>${escapeHTML(o.recipient)}<br><small>${escapeHTML(o.email)}<br>${escapeHTML(o.phone)}</small></td><td><small>${(Array.isArray(o.items)?o.items:[]).map(i=>escapeHTML((i.name||'Produkt')+' / '+(i.variant||'')+' × '+Number(i.quantity||0))).join('<br>')}</small></td><td>${cash(o.total)}</td><td><span class="status ${o.payment_status==='paid'?'':'off'}">${escapeHTML(polishStatus(o.payment_status))}</span></td><td>${escapeHTML([o.delivery_address?.street,o.delivery_address?.apartment?('lok. '+o.delivery_address.apartment):'',o.delivery_address?.postal_code,o.delivery_address?.city].filter(Boolean).join(', ')||'Brak adresu')}</td><td><select data-shipping-status="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>${['paid','in_production','shipped','delivered','cancelled'].map(status=>`<option value="${status}" ${selected(status,o.status)}>${polishStatus(status)}</option>`).join('')}</select><input aria-label="Numer śledzenia InPost" data-tracking="${o.id}" value="${escapeHTML(o.inpost_tracking||'')}" placeholder="Numer śledzenia" maxlength="60" ${o.payment_status==='paid'?'':'disabled'}><button type="button" class="secondary-btn" data-save-shipping="${o.id}" ${o.payment_status==='paid'?'':'disabled'}>Zapisz</button></td></tr>`).join('')}</tbody></table></div>`:'<p>Brak opłaconych zamówień.</p>';
     });
   }else if(adminTab==='customers'){
     target.innerHTML=headRow('Klienci')+'<p class="subtle">Lista profili użytkowników zarejestrowanych przez Supabase Auth.</p><div id="adminCustomerTable">Wczytywanie…</div>';
@@ -307,11 +348,10 @@ function categoryForm(id=null){
 }
 function productForm(id=null){
   ensureAdmin();const p=products.find(p=>p.id===id),editing=!!p;
-  if(!categories.length){notify('Najpierw dodaj kategorię.');adminTab='categories';renderAdmin();return}
   const opts=categories.map(c=>({id:c.id,label:(c.parent_id?categoryName(c.parent_id)+' → ':'')+c.name}));
   modal(`<h2 id="modalTitle">${editing?'Edytuj':'Dodaj'} produkt</h2><p class="modal-desc">Po dodaniu produktu powstanie domyślny wariant. Kolejne kolory i rozmiary dodasz w sekcji Warianty.</p>
   <form id="productForm" class="form-grid"><div class="field span2"><label>Nazwa produktu *</label><input name="name" required maxlength="180" value="${escapeHTML(p?.name||'')}"></div>
-  <div class="field span2"><label>Kategoria / podkategoria *</label><select name="category_id" required>${selectOptions(opts,p?.category_id,'Wybierz kategorię')}</select></div>
+  <div class="field span2"><label>Kategoria / podkategoria (opcjonalnie)</label><select name="category_id">${selectOptions(opts,p?.category_id,'Bez kategorii')}</select></div>
   <div class="field span2"><label>Opis produktu</label><textarea name="description">${escapeHTML(p?.description||'')}</textarea></div>
   <div class="field"><label>Cena podstawowa (zł) *</label><input name="base_price" type="number" min="0" max="9999999" step="0.01" required value="${p?.base_price??''}"></div>
   <div class="field span2"><label>Zdjęcie produktu (JPG, PNG, WebP, AVIF, do 5 MB)</label><input name="photo" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><span class="tiny">Wysyłane do Supabase Storage. Bez plików lokalnych na Vercel.</span></div>
@@ -321,7 +361,7 @@ function productForm(id=null){
     e.preventDefault();const b=e.target.querySelector('[type=submit]');setLoading(b,true);const d=new FormData(e.target);
     try{
       let url=p?.image_url||null;const file=d.get('photo');if(file?.size)url=await uploadImage(file);
-      const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id'),description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
+      const payload={name:String(d.get('name')).trim(),category_id:d.get('category_id')||null,description:String(d.get('description')||'').trim(),base_price:Number(d.get('base_price')),image_url:url||null,is_active:d.get('is_active')==='on',updated_at:new Date().toISOString()};
       if(!editing)payload.slug=defaultSlug(payload.name);
       const result=editing?await sb.from('products').update(payload).eq('id',id).select('id').single():await sb.from('products').insert(payload).select('id').single();
       if(result.error)throw result.error;
@@ -374,20 +414,44 @@ function variantForm(id=null,defaultProductId=''){
     }catch(err){fail(err)}finally{setLoading(b,false)}
   });
 }
-async function deleteRecord(table,id,label){
-  ensureAdmin();if(!confirm(`Czy na pewno usunąć ${label}? Ta operacja jest nieodwracalna.`))return;
-  const {error}=await sb.from(table).delete().eq('id',id);
-  if(error)fail(error);else{notify('Usunięto.');await loadCatalog()}
+const deletingRecords=new Set();
+async function deleteRecord(table,id,label,{confirmation=true}={}){
+  ensureAdmin();
+  if(!id||!['categories','products','product_variants'].includes(table))throw new Error('Nieprawidłowy rekord.');
+  const key=table+':'+id;
+  if(deletingRecords.has(key))return;
+  if(confirmation){
+    const prompt=table==='categories'
+      ? `Czy usunąć kategorię „${categoryName(id)}”? Produkty pozostaną w sklepie bez przypisanej kategorii, a podkategorie staną się kategoriami głównymi. Tej operacji nie można cofnąć.`
+      : `Czy na pewno usunąć ${label}? Tej operacji nie można cofnąć.`;
+    if(!window.confirm(prompt))return;
+  }
+  deletingRecords.add(key);
+  try{
+    const {data,error}=await sb.from(table).delete().eq('id',id).select('id');
+    if(error)throw error;
+    if(!data?.length)throw new Error('Nie znaleziono rekordu lub brak uprawnień do usunięcia.');
+    if(table==='products'){
+      cart=cart.filter(item=>item.id!==id);
+      saveCart();
+    }
+    if(table==='categories'){
+      // Filtr nie może pozostać ustawiony na usuniętą kategorię.
+      categoryFilter='all';subcategoryFilter='all';
+    }
+    await loadCatalog();
+    notify(table==='products'?'Produkt usunięty.':table==='categories'?'Kategoria usunięta. Produkty zostały zachowane.':'Wariant usunięty.');
+  }catch(error){fail(error)}finally{deletingRecords.delete(key)}
 }
 async function adminAction(action,id){
   try{ensureAdmin();
     if(action==='category-add')categoryForm();
     if(action==='category-edit')categoryForm(id);
-    if(action==='category-delete')await deleteRecord('categories',id,'kategorię (tylko gdy nie ma podkategorii ani produktów)');
+    if(action==='category-delete')await deleteRecord('categories',id,'kategorię');
     if(action==='product-add')productForm();
     if(action==='product-edit')productForm(id);
     if(action==='product-variants'){adminTab='variants';renderAdmin();variantForm(null,id)}
-    if(action==='product-delete')await deleteRecord('products',id,'produkt i jego warianty');
+    if(action==='product-delete')await deleteRecord('products',id,'produkt i jego warianty',{confirmation:false});
     if(action==='variant-add')variantForm();
     if(action==='variant-edit')variantForm(id);
     if(action==='variant-delete')await deleteRecord('product_variants',id,'wariant');
@@ -412,7 +476,16 @@ function wire(){
      b.disabled=true;const {error}=await sb.from('checkout_orders').update({status,inpost_tracking:tracking}).eq('id',id).eq('payment_status','paid');b.disabled=false;
      if(error)fail(error);else{notify('Zapisano informacje o nadaniu.');renderAdmin()}return;
    }
-   let action=e.target.closest('[data-admin-action]');if(action)adminAction(action.dataset.adminAction,action.dataset.id);
+   let action=e.target.closest('[data-admin-action]');
+   if(action&&!action.disabled){
+     if(action.dataset.adminAction?.endsWith('-delete')){
+       action.disabled=true;
+       const oldText=action.textContent;
+       action.textContent='Usuwanie…';
+       try{await adminAction(action.dataset.adminAction,action.dataset.id)}
+       finally{if(action.isConnected){action.disabled=false;action.textContent=oldText}}
+     }else await adminAction(action.dataset.adminAction,action.dataset.id);
+   }
  };
   $('cartItems').onclick=e=>{let plus=e.target.closest('[data-cart-qty]'),del=e.target.closest('[data-cart-remove]');if(plus){let item=cart.find(x=>x.variantId===plus.dataset.cartQty);if(!item)return;const v=variants.find(v=>v.id===item.variantId);let next=item.qty+Number(plus.dataset.change);if(next>20){notify('Maksymalnie 20 szt. wariantu w jednym zamówieniu.');return}if(next<=0)cart=cart.filter(i=>i!==item);else item.qty=next;saveCart();renderCart()}if(del){cart=cart.filter(i=>i.variantId!==del.dataset.cartRemove);saveCart();renderCart()}};
   $('screenOverlay').onclick=closeModal;$('modalClose').onclick=closeModal;document.querySelector('.drawer .close-btn').onclick=closeModal;
