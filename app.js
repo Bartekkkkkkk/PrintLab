@@ -447,7 +447,7 @@ async function adminAction(action,id){
   try{ensureAdmin();
     if(action==='category-add')categoryForm();
     if(action==='category-edit')categoryForm(id);
-    if(action==='category-delete')await deleteRecord('categories',id,'kategorię');
+    if(action==='category-delete')await deleteRecord('categories',id,'kategorię',{confirmation:false});
     if(action==='product-add')productForm();
     if(action==='product-edit')productForm(id);
     if(action==='product-variants'){adminTab='variants';renderAdmin();variantForm(null,id)}
