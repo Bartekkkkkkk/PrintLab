@@ -145,7 +145,7 @@ function renderCatalog(){
     const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
     const price=vs.length?Math.min(...vs.map(v=>Number(v.price))):Number(p.base_price);
     return `<article class="product-card"><div class="product-photo">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" loading="lazy" alt="${escapeHTML(p.name)}">`:`<span class="placeholder-product">PL<span>.</span></span>`}</div>
-      <div class="product-details"><span class="product-category-label">${escapeHTML(categoryName(p.category_id))}</span><h3>${escapeHTML(p.name)}</h3><p>${escapeHTML(p.description||'Produkt PrintLab — druk 3D.').slice(0,160)}</p>
+      <div class="product-details"><span class="product-category-label">${escapeHTML(categoryName(p.category_id))}</span><h3>${escapeHTML(p.name)}</h3>${p.description?.trim()?`<p>${escapeHTML(p.description).slice(0,160)}</p>`:''}
       <p class="lead-time">Czas realizacji: 2 dni robocze</p><div class="product-bottom"><span class="product-price">${vs.length>1?'od ':''}${cash(price)}</span><button type="button" class="small-button" data-view-product="${p.id}">Zobacz</button></div></div></article>`;
   }).join('');
   if(!configured){
@@ -226,7 +226,7 @@ function productModal(productId){
   const vs=variants.filter(v=>v.product_id===p.id&&v.is_active);
   modal(`<span class="section-kicker">${escapeHTML(categoryName(p.category_id))}</span><h2 id="modalTitle">${escapeHTML(p.name)}</h2>
   <div class="product-modal-pic" id="modalProductPic">${cleanUrl(p.image_url)?`<img src="${escapeHTML(cleanUrl(p.image_url))}" alt="${escapeHTML(p.name)}">`:'<span class="placeholder-product">PL<span>.</span></span>'}</div>
-  <p class="modal-desc">${escapeHTML(p.description||'Produkt PrintLab.')}</p><p class="lead-time">Czas realizacji: 2 dni robocze</p>
+  ${p.description?.trim()?`<p class="modal-desc">${escapeHTML(p.description)}</p>`:''}<p class="lead-time">Czas realizacji: 2 dni robocze</p>
   ${vs.length?`<div class="variant-choice"><label for="variantPicker">Wybierz wariant / podprodukt</label><select id="variantPicker">${vs.map(v=>`<option value="${v.id}">${escapeHTML(v.name)}${v.color?' — '+escapeHTML(v.color):''}${v.size?' / '+escapeHTML(v.size):''} · ${cash(v.price)}</option>`).join('')}</select><p id="variantFulfillment" class="subtle"></p></div><button type="button" id="addVariantToCart" class="primary-btn full">Dodaj do koszyka</button>`:'<div class="empty-hint">Ten produkt nie ma jeszcze dostępnych wariantów.</div>'}`);
   if(!vs.length)return;
   const picker=$('variantPicker');picker.value=vs[0].id;
